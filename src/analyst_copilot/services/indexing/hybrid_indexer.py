@@ -1,0 +1,66 @@
+"""Build and persist BM25 + vector indices for a filing."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Union
+
+from analyst_copilot.parsing.html_filing_parser import parse_filing_html
+from analyst_copilot.parsing.models import FilingDocument
+from analyst_copilot.retrieval.bm25.builder import BM25IndexBuilder
+from analyst_copilot.retrieval.bm25.storage import BM25IndexStore
+from analyst_copilot.retrieval.vector.builder import VectorIndexBuilder
+from analyst_copilot.retrieval.vector.storage import VectorIndexStore
+from analyst_copilot.services.indexing.filing_indexer import FilingIndexer
+from analyst_copilot.services.indexing.models import FilingIndices
+
+
+class HybridFilingIndexer:
+    """Parse a filing and build both lexical and vector indices."""
+
+    def __init__(
+        self,
+        filing_indexer: Optional[FilingIndexer] = None,
+        vector_builder: Optional[VectorIndexBuilder] = None,
+        bm25_store: Optional[BM25IndexStore] = None,
+        vector_store: Optional[VectorIndexStore] = None,
+    ) -> None:
+        self._filing_indexer = filing_indexer or FilingIndexer()
+        self._vector_builder = vector_builder or VectorIndexBuilder()
+        self._bm25_store = bm25_store or BM25IndexStore()
+        self._vector_store = vector_store or VectorIndexStore()
+
+    def parse(self, filing_path: Union[Path, str], doc_name: Optional[str] = None) -> FilingDocument:
+        return parse_filing_html(filing_path, doc_name=doc_name)
+
+    def build_indices(self, document: FilingDocument) -> FilingIndices:
+        bm25_index = BM25IndexBuilder().build(document)
+        vector_index = self._vector_builder.build(document)
+        return FilingIndices(
+            doc_name=document.doc_name,
+            bm25_index=bm25_index,
+            vector_index=vector_index,
+        )
+
+    def index_filing(
+        self,
+        filing_path: Union[Path, str],
+        doc_name: Optional[str] = None,
+        save: bool = True,
+    ) -> FilingIndices:
+        document = self.parse(filing_path, doc_name=doc_name)
+        indices = self.build_indices(document)
+        if save:
+            self._bm25_store.save(indices.bm25_index)
+            self._vector_store.save(indices.vector_index)
+        return indices
+
+    def load_indices(self, doc_name: str) -> FilingIndices:
+        return FilingIndices(
+            doc_name=doc_name,
+            bm25_index=self._bm25_store.load(doc_name),
+            vector_index=self._vector_store.load(doc_name),
+        )
+
+    def indices_exist(self, doc_name: str) -> bool:
+        return self._bm25_store.exists(doc_name) and self._vector_store.exists(doc_name)

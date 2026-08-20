@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "bge-m3"
     openai_embedding_model: str = "text-embedding-3-small"
 
+    # Retrieval
+    retrieval_max_chars_per_page: int = 2500
+    hybrid_bm25_weight: float = 0.45
+    hybrid_vector_weight: float = 0.55
+    hybrid_candidate_pool: int = 80
+    hybrid_rrf_k: int = 60
+    hybrid_rrf_weight: float = 0.6
+    hybrid_weighted_weight: float = 0.4
+    hybrid_statement_boost: float = 1.25
+
     @property
     def chat_base_url(self) -> str:
         """OpenAI-compatible base URL for chat (/v1/chat/completions)."""

@@ -2,6 +2,10 @@
 
 Backend for question-answering over SEC annual and quarterly filings.
 
+- **Plan (done vs remaining):** [PLAN.md](PLAN.md)
+- **Implementation docs:** [docs/README.md](docs/README.md)
+- **Challenge spec:** [AGENTS.md](AGENTS.md)
+
 ## Project layout
 
 ```text
@@ -18,8 +22,14 @@ large-documents-llm-system/
 │       ├── config/           # Settings from .env
 │       ├── parsing/          # HTML → page-aligned text
 │       ├── embeddings/       # OpenAI-compatible /v1/embeddings client
-│       ├── retrieval/        # BM25 + vector search (later)
-│       └── services/         # Indexing / QA pipeline (later)
+│       ├── retrieval/        # BM25 + vector + hybrid search
+│       │   ├── models.py
+│       │   ├── tokenization.py
+│       │   ├── bm25/
+│       │   ├── vector/
+│       │   └── hybrid/
+│       └── services/
+│           └── indexing/     # BM25 and hybrid filing indexers
 ├── storage/                  # Generated indices (gitignored)
 └── tests/
 ```
@@ -74,6 +84,24 @@ Parse + embed + similarity search demo:
 
 ```bash
 PYTHONPATH=src python scripts/examples/embedding_example.py
+```
+
+Index a filing with BM25 and run a lexical search:
+
+```bash
+PYTHONPATH=src python scripts/examples/bm25_search_example.py
+```
+
+Build BM25 + vector indices and run hybrid search:
+
+```bash
+PYTHONPATH=src python scripts/examples/hybrid_search_example.py
+```
+
+Full first filing + official practice question:
+
+```bash
+PYTHONPATH=src python scripts/examples/hybrid_search_full_filing.py
 ```
 
 Run tests:
