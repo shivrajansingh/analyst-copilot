@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analyst-copilot"
+version = "0.1.0"
+description = "SEC filing question-answering backend (Analyst Copilot)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    "openai>=1.40.0",
+    "python-dotenv>=1.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "rank-bm25>=0.2.2",
+    "scikit-learn>=1.3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
