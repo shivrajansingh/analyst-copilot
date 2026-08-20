@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     project_root: Path = PROJECT_ROOT
     filings_dir: Path = PROJECT_ROOT / "filings"
     storage_dir: Path = PROJECT_ROOT / "storage"
+    data_dir: Path = PROJECT_ROOT / "data"
 
     # Chat LLM (OpenAI-compatible)
     openai_url: str = ""
@@ -62,6 +63,14 @@ class Settings(BaseSettings):
     hybrid_rrf_weight: float = 0.6
     hybrid_weighted_weight: float = 0.4
     hybrid_statement_boost: float = 1.25
+
+    # QA / abstention
+    qa_top_k: int = 5
+    qa_min_retrieval_score: float = 0.25
+    qa_max_evidence_chars: int = 2200
+    qa_temperature: float = 0.0
+    qa_max_tokens: int = 4096
+    not_found_message: str = "not found in this filing"
 
     @property
     def chat_base_url(self) -> str:

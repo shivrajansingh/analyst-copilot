@@ -2,7 +2,7 @@
 Hybrid search over an entire filing (all pages).
 
 Indexes every page of the first filing in filings/, then runs hybrid
-retrieval using the matching practice question from practice-questions.jsonl.
+retrieval using the matching practice question from data/practice-questions.jsonl.
 
 Usage:
   PYTHONPATH=src python scripts/examples/hybrid_search_full_filing.py
@@ -40,7 +40,7 @@ def main() -> None:
     settings = get_settings()
     filing_path = first_filing_path(settings.filings_dir)
     doc_name = filing_path.stem
-    questions_path = settings.project_root / "practice-questions.jsonl"
+    questions_path = settings.data_dir / "practice-questions.jsonl"
 
     question, expected_answer, evidence_page = practice_question_for_doc(
         questions_path,

@@ -22,8 +22,10 @@ A chatbot that answers analyst questions over one SEC filing at a time, with a *
 | Vector retrieval | Done | Embed pages, cosine search, persist |
 | Hybrid retrieval | Done | Query expansion + RRF + weighted fusion + statement boost |
 | Indexing services | Done | `FilingIndexer` (BM25) and `HybridFilingIndexer` |
-| Demos / tests | Done | Parse, embed, BM25, hybrid; pytest coverage for core paths |
-| Full-filing smoke test | Done | `3M_2018_10K` capex question ranks printed page **60** first |
+| QA pipeline | Done | Chat client, JSON extract, verifier, abstain |
+| Abstention | Done | Low retrieval score, model not_found, number/page checks |
+| Demos / tests | Done | Parse, embed, BM25, hybrid, QA unit tests |
+| Eval runner | Done | `scripts/eval/run_practice.py` writes `data/eval-results.json` |
 
 Docs for completed work live in [`docs/`](docs/README.md).
 
@@ -31,32 +33,7 @@ Docs for completed work live in [`docs/`](docs/README.md).
 
 ## Remaining (required for the product)
 
-### 1. Question-answering pipeline
-
-**What:** Given a filing + question, retrieve evidence, call the chat LLM (`OPENAI_URL` / `hy3`), return answer + document + page, or abstain.
-
-**How to complete:**
-1. Add `src/analyst_copilot/llm/` — OpenAI-compatible chat client (same pattern as embeddings).
-2. Add `src/analyst_copilot/services/qa/` — `QuestionAnsweringService`:
-   - load or build hybrid indices for the selected filing
-   - `HybridSearcher.search(..., top_k=5)`
-   - prompt the LLM with question + retrieved page snippets + instruction to cite `printed_page`
-   - require JSON: `{answer, page, evidence_snippet, confidence}` or `{not_found: true}`
-3. Add a **verifier** (`services/qa/verifier.py`):
-   - numbers in the answer must appear in the cited page text
-   - if verification fails → **“not found in this filing”**
-4. Demo: `scripts/examples/qa_example.py` on the 3M capex question.
-
-### 2. Abstention / “not found in this filing”
-
-**What:** Spec requires an explicit decline when evidence is weak. Wrong confident answers score **−1**.
-
-**How to complete:**
-1. Thresholds: low fused score, LLM `not_found`, or verifier fail.
-2. Never invent a number that is not on the cited page.
-3. Add a negative test: question with no support in the filing → abstain.
-
-### 3. Chat UI + “Add filing”
+### 1. Chat UI + “Add filing”
 
 **What:** Product, not a CLI. Upload a new HTML filing, show processing status (≤ 10 minutes), then chat.
 
@@ -66,16 +43,15 @@ Docs for completed work live in [`docs/`](docs/README.md).
 3. UI (Streamlit or simple HTML): filing selector, upload control, chat box, evidence (doc name + page + snippet).
 4. Scope chat to **one selected filing** per question.
 
-### 4. Evaluation on `practice-questions.jsonl`
+### 2. Score eval results against the gold key
 
-**What:** 136 labeled questions. Need measured answer + page accuracy before the live session.
+**What:** `run_practice.py` produces model answers. You still need +1 / 0 / −1 vs `data/practice-questions.jsonl`.
 
 **How to complete:**
-1. `scripts/eval/run_practice.py` — loop questions, run QA, compare answer + page to gold.
-2. Score: +1 / 0 / −1 per the spec table.
-3. Tune retrieval/prompt/verifier from the score; record what you kept vs dropped for the approach note.
+1. Compare `answer.text` and `answer.page` to gold `answer` and `evidence_page_num`.
+2. Tune retrieval/prompt/verifier from the score; record what you kept vs dropped for the approach note.
 
-### 5. README + one-page approach note
+### 3. README + one-page approach note
 
 **What:** Submit runnable instructions and a one-page note (tried, measured, kept, thrown away).
 
@@ -99,15 +75,13 @@ Docs for completed work live in [`docs/`](docs/README.md).
 ## Suggested order for remaining work
 
 ```text
-1. Chat LLM client
-2. QA service + verifier + abstention
-3. Eval loop on practice-questions.jsonl
-4. Tune until abstention vs accuracy is sane
-5. API + Add filing status + chat UI
-6. README + APPROACH.md
+1. Run eval (all 136 or --limit N) and inspect data/eval-results.json
+2. Score against gold; tune abstention vs accuracy
+3. API + Add filing status + chat UI
+4. README + APPROACH.md
 ```
 
-Do not start the UI until QA + abstention work on the CLI/eval path. A pretty chat that guesses will score below zero.
+QA + verifier + abstention are implemented on the CLI path. Next is measured eval, then UI.
 
 ---
 
@@ -118,5 +92,6 @@ Filing HTML
     → parsing (pages + printed_page)
     → BM25 index  +  vector index
     → hybrid search (expand → retrieve → RRF/weighted → statement boost)
-    → [remaining] LLM answer + verify + UI
+    → LLM answer + verify / abstain
+    → [remaining] eval harness + UI
 ```

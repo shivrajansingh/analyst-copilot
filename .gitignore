@@ -16,6 +16,10 @@ storage/
 *.npz
 *.faiss
 
+# Eval runs (model output)
+data/eval-results.json
+data/eval-results*.json
+
 # OS / IDE
 .DS_Store
 .idea/

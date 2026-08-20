@@ -1,0 +1,115 @@
+from analyst_copilot.parsing.models import Page
+from analyst_copilot.retrieval.models import ScoredPage
+from analyst_copilot.services.qa.models import LLMExtraction
+from analyst_copilot.services.qa.parser import parse_llm_extraction
+from analyst_copilot.services.qa.verifier import AnswerVerifier, extract_normalized_numbers
+
+
+def _hit(page_index: int, printed_page: int, text: str, score: float = 1.0) -> ScoredPage:
+    return ScoredPage(
+        page=Page(
+            doc_name="3M_2018_10K",
+            page_index=page_index,
+            text=text,
+            printed_page=printed_page,
+        ),
+        score=score,
+        rank=1,
+    )
+
+
+def test_parser_reads_json_object():
+    raw = '{"not_found": false, "answer": "$1577 million", "page": 60, "evidence_snippet": "PP&E (1,577)", "confidence": 0.9}'
+    extraction = parse_llm_extraction(raw)
+    assert extraction.not_found is False
+    assert extraction.page == 60
+    assert "1577" in extraction.answer
+
+
+def test_parser_handles_fenced_json_and_abstention():
+    raw = "```json\n{\"not_found\": true, \"answer\": \"\", \"page\": null}\n```"
+    extraction = parse_llm_extraction(raw)
+    assert extraction.not_found is True
+
+
+def test_parser_abstains_on_invalid_json():
+    extraction = parse_llm_extraction("I think capex was high.")
+    assert extraction.not_found is True
+
+
+def test_extract_normalized_numbers():
+    numbers = extract_normalized_numbers("Capex was $1,577.00 million vs (1,420)")
+    assert "1577" in numbers
+    assert "1420" in numbers
+
+
+def test_verifier_accepts_number_on_cited_page():
+    hits = [
+        _hit(
+            59,
+            60,
+            "Consolidated Statement of Cash Flows Purchases of property, plant and equipment (PP&E) (1,577)",
+        )
+    ]
+    extraction = LLMExtraction(
+        not_found=False,
+        answer="$1,577 million",
+        page=60,
+        evidence_snippet="Purchases of property, plant and equipment (PP&E)",
+    )
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is True
+    assert result.page == 60
+
+
+def test_verifier_rejects_number_missing_from_page():
+    hits = [_hit(0, 1, "This page discusses dividends paid of 3,193.")]
+    extraction = LLMExtraction(not_found=False, answer="$1,577 million", page=1)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "number_not_on_page"
+
+
+def test_verifier_rejects_uncited_page():
+    hits = [_hit(0, 10, "Purchases of property (1,577)")]
+    extraction = LLMExtraction(not_found=False, answer="$1,577", page=60)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "page_not_in_retrieval"
+
+
+def test_qa_service_abstains_when_model_not_found():
+    from analyst_copilot.services.qa.service import QuestionAnsweringService
+
+    class FakeChat:
+        model_name = "fake"
+
+        def complete(self, messages, temperature=0.0, max_tokens=800):
+            return '{"not_found": true, "answer": "", "page": null}'
+
+    class FakeSearcher:
+        def search(self, bm25_index, vector_index, query, top_k=5):
+            from analyst_copilot.retrieval.models import SearchResult
+
+            return SearchResult(
+                query=query,
+                doc_name="demo",
+                hits=[_hit(1, 2, "unrelated text about offices", score=0.9)],
+            )
+
+    class FakeIndexer:
+        def indices_exist(self, doc_name):
+            return True
+
+        def load_indices(self, doc_name):
+            return type("Idx", (), {"bm25_index": None, "vector_index": None})()
+
+    service = QuestionAnsweringService(
+        indexer=FakeIndexer(),
+        searcher=FakeSearcher(),
+        chat_client=FakeChat(),
+    )
+    result = service.answer("What is FY2018 capex?", "demo")
+    assert result.found is False
+    assert result.answer == "not found in this filing"
+    assert result.abstention_reason == "model_abstain"

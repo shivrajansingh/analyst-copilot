@@ -12,3 +12,5 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Vector retrieval](06-vector-retrieval.md) | Dense page embeddings |
 | [Hybrid retrieval](07-hybrid-retrieval.md) | Fusion, expansion, boost |
 | [Indexing services](08-indexing-services.md) | Orchestration and storage |
+| [Question answering](09-qa-pipeline.md) | LLM extract + verify + abstain |
+| [Evaluation runner](10-evaluation.md) | Loop practice questions → eval JSON |
