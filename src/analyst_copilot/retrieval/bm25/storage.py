@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from analyst_copilot.config.settings import get_settings
+from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
 from analyst_copilot.retrieval.bm25.index import BM25Index
 from analyst_copilot.retrieval.models import BM25IndexMetadata
 
@@ -61,8 +62,21 @@ class BM25IndexStore:
         return index
 
     def exists(self, doc_name: str) -> bool:
+        """
+        True only when a usable index is on disk.
+
+        An index built by an older parser is reported as absent, so callers
+        rebuild instead of searching stale page boundaries.
+        """
         target_dir = self.index_dir(doc_name)
-        return (target_dir / _METADATA_FILE).exists() and (target_dir / _INDEX_FILE).exists()
+        metadata_path = target_dir / _METADATA_FILE
+        if not metadata_path.exists() or not (target_dir / _INDEX_FILE).exists():
+            return False
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return payload.get("parser_version") == PARSER_VERSION
 
     @staticmethod
     def _metadata_to_dict(metadata: BM25IndexMetadata) -> Dict[str, Any]:
@@ -71,6 +85,7 @@ class BM25IndexStore:
             "source_path": metadata.source_path,
             "page_count": metadata.page_count,
             "tokenizer_version": metadata.tokenizer_version,
+            "parser_version": metadata.parser_version,
         }
 
     @staticmethod
@@ -80,4 +95,5 @@ class BM25IndexStore:
             source_path=payload["source_path"],
             page_count=payload["page_count"],
             tokenizer_version=payload.get("tokenizer_version", "v1"),
+            parser_version=payload.get("parser_version", "unknown"),
         )

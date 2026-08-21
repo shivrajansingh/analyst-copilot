@@ -64,10 +64,13 @@ class AnswerVerifier:
             return None
         if page is None:
             return hits[0]
+        # Exact match only. The prompt labels each excerpt with its
+        # citation_page, so a mismatch means the model cited a page it was not
+        # shown. Fuzzy fallbacks (printed_page, page_index + 1) used to resolve
+        # to a neighbouring page, which produced confident answers attached to
+        # the wrong location -- the one outcome the rubric penalises.
         for hit in hits:
-            if hit.page.citation_page == page or hit.page.printed_page == page:
-                return hit
-            if hit.page.page_index + 1 == page:
+            if hit.page.citation_page == page:
                 return hit
         return None
 

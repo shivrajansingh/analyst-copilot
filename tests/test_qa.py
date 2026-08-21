@@ -44,6 +44,7 @@ def test_extract_normalized_numbers():
 
 
 def test_verifier_accepts_number_on_cited_page():
+    # citation_page is the 0-based page_index; the printed footer reads 60.
     hits = [
         _hit(
             59,
@@ -54,20 +55,29 @@ def test_verifier_accepts_number_on_cited_page():
     extraction = LLMExtraction(
         not_found=False,
         answer="$1,577 million",
-        page=60,
+        page=59,
         evidence_snippet="Purchases of property, plant and equipment (PP&E)",
     )
     result = AnswerVerifier().verify(extraction, hits)
     assert result.ok is True
-    assert result.page == 60
+    assert result.page == 59
 
 
 def test_verifier_rejects_number_missing_from_page():
     hits = [_hit(0, 1, "This page discusses dividends paid of 3,193.")]
-    extraction = LLMExtraction(not_found=False, answer="$1,577 million", page=1)
+    extraction = LLMExtraction(not_found=False, answer="$1,577 million", page=0)
     result = AnswerVerifier().verify(extraction, hits)
     assert result.ok is False
     assert result.reason == "number_not_on_page"
+
+
+def test_verifier_ignores_printed_page_when_resolving_citation():
+    """Footer numbers are unreliable, so citing one must not resolve a hit."""
+    hits = [_hit(59, 60, "Purchases of property, plant and equipment (PP&E) (1,577)")]
+    extraction = LLMExtraction(not_found=False, answer="$1,577 million", page=60)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "page_not_in_retrieval"
 
 
 def test_verifier_rejects_uncited_page():

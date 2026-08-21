@@ -27,6 +27,7 @@ class BM25IndexMetadata:
     source_path: str
     page_count: int
     tokenizer_version: str = "v1"
+    parser_version: str = "unknown"
 
 
 @dataclass
@@ -39,6 +40,7 @@ class VectorIndexMetadata:
     embedding_model: str
     dimensions: int
     max_chars_per_page: int
+    parser_version: str = "unknown"
 
 
 @dataclass

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from analyst_copilot.config.settings import get_settings
+from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
 from analyst_copilot.parsing.models import Page
 from analyst_copilot.retrieval.models import VectorIndexMetadata
 from analyst_copilot.retrieval.vector.index import VectorIndex
@@ -78,11 +79,33 @@ class VectorIndexStore:
         return VectorIndex(metadata=metadata, pages=pages, vectors=vectors)
 
     def exists(self, doc_name: str) -> bool:
+        """
+        True only when a usable index is on disk.
+
+        An index whose embeddings were built by an older parser, or by a
+        different embedding model, is reported as absent so callers rebuild
+        rather than search stale page boundaries.
+        """
         target_dir = self.index_dir(doc_name)
-        return all(
+        if not all(
             (target_dir / name).exists()
             for name in (_METADATA_FILE, _VECTORS_FILE, _PAGES_FILE)
-        )
+        ):
+            return False
+        try:
+            payload = json.loads((target_dir / _METADATA_FILE).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if payload.get("parser_version") != PARSER_VERSION:
+            return False
+        settings = get_settings()
+        if payload.get("embedding_model") != settings.resolved_embedding_model:
+            return False
+        # The truncation cap decides how much of each page was embedded, so
+        # changing it changes the vectors. Without this check, widening the
+        # evidence window would silently reuse embeddings of the old, shorter
+        # text and the change would appear to have no effect.
+        return payload.get("max_chars_per_page") == settings.retrieval_max_chars_per_page
 
     @staticmethod
     def _metadata_to_dict(metadata: VectorIndexMetadata) -> Dict[str, Any]:
@@ -93,6 +116,7 @@ class VectorIndexStore:
             "embedding_model": metadata.embedding_model,
             "dimensions": metadata.dimensions,
             "max_chars_per_page": metadata.max_chars_per_page,
+            "parser_version": metadata.parser_version,
         }
 
     @staticmethod
@@ -104,6 +128,7 @@ class VectorIndexStore:
             embedding_model=payload["embedding_model"],
             dimensions=payload["dimensions"],
             max_chars_per_page=payload["max_chars_per_page"],
+            parser_version=payload.get("parser_version", "unknown"),
         )
 
     @staticmethod

@@ -7,6 +7,7 @@ from typing import Optional
 from analyst_copilot.config.settings import get_settings
 from analyst_copilot.embeddings import get_embedding_client
 from analyst_copilot.embeddings.base import EmbeddingClient
+from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
 from analyst_copilot.parsing.models import FilingDocument
 from analyst_copilot.retrieval.models import VectorIndexMetadata
 from analyst_copilot.retrieval.vector.index import VectorIndex
@@ -35,6 +36,7 @@ class VectorIndexBuilder:
             embedding_model=self._embedding_client.model_name,
             dimensions=dimensions,
             max_chars_per_page=settings.retrieval_max_chars_per_page,
+            parser_version=PARSER_VERSION,
         )
 
         return VectorIndex(

@@ -6,6 +6,7 @@ from typing import Optional
 
 from rank_bm25 import BM25Okapi
 
+from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
 from analyst_copilot.parsing.models import FilingDocument
 from analyst_copilot.retrieval.bm25.index import BM25Index
 from analyst_copilot.retrieval.models import BM25IndexMetadata
@@ -31,6 +32,7 @@ class BM25IndexBuilder:
             source_path=document.source_path,
             page_count=len(document.pages),
             tokenizer_version=self._tokenizer.VERSION,
+            parser_version=PARSER_VERSION,
         )
 
         return BM25Index(
