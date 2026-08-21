@@ -64,6 +64,21 @@ EMBEDDING_MODEL=bge-m3
 
 Chat and embeddings use **separate** models and URLs. `OPENAI_MODEL` is not used for embeddings.
 
+## Index every filing
+
+```bash
+PYTHONPATH=src python scripts/index_all.py              # index whatever is missing (default)
+PYTHONPATH=src python scripts/index_all.py --overwrite  # re-embed every filing
+PYTHONPATH=src python scripts/index_all.py --dry-run    # show the plan, embed nothing
+PYTHONPATH=src python scripts/index_all.py --only '3M*' --workers 4
+```
+
+Skipping is the default, so the script is safe to re-run and safe to interrupt — completed filings are kept. Failures are retried (`--retries`, default 3) and listed at the end; re-running picks them up.
+
+An index counts as current only if it was built by this `PARSER_VERSION`, with this `EMBEDDING_MODEL`, at this `retrieval_max_chars_per_page`. Change any of those and the affected indices are rebuilt even without `--overwrite`. `--dry-run` labels each filing `missing`, `stale` or `current` so you can see what a run would cost before starting it.
+
+Each run writes `storage/index-report.json` with per-filing page counts and timings, and flags any filing that exceeded the spec's 10-minute-per-filing budget.
+
 ## Ask one question (index if needed)
 
 ```bash
