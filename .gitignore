@@ -19,6 +19,7 @@ storage/
 # Eval runs (model output)
 data/eval-results.json
 data/eval-results*.json
+data/questions-by-doc-results.json
 
 # OS / IDE
 .DS_Store

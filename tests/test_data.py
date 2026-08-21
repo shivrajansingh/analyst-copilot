@@ -1,13 +1,16 @@
 import json
 
 from analyst_copilot.config.settings import get_settings
-from analyst_copilot.data import group_questions_by_doc, load_practice_records, resolve_filing_path
+from analyst_copilot.data import group_questions_by_doc, load_practice_records
 
 
-def test_resolve_filing_path_for_3m():
-    path = resolve_filing_path("3M_2018_10K")
-    assert path.name == "3M_2018_10K.htm"
-    assert path.exists()
+def test_resolve_user_filing_path_accepts_relative_and_stem():
+    from analyst_copilot.data import resolve_user_filing_path
+
+    by_rel = resolve_user_filing_path("filings/3M_2018_10K.htm")
+    by_stem = resolve_user_filing_path("3M_2018_10K")
+    assert by_rel.name == "3M_2018_10K.htm"
+    assert by_stem == by_rel
 
 
 def test_group_questions_by_doc():

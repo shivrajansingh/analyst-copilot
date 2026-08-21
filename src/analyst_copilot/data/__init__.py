@@ -29,6 +29,23 @@ def resolve_filing_path(doc_name: str) -> Path:
     raise FileNotFoundError(f"No filing found for document: {doc_name}")
 
 
+def resolve_user_filing_path(doc_path: str) -> Path:
+    """Resolve a CLI path, filename, or doc stem to an existing filing file."""
+    settings = get_settings()
+    raw = Path(doc_path).expanduser()
+    candidates = [
+        raw,
+        settings.project_root / raw,
+        settings.filings_dir / raw.name,
+    ]
+    if raw.suffix == "":
+        candidates.append(settings.filings_dir / f"{raw.name}.htm")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return resolve_filing_path(raw.stem)
+
+
 def load_practice_records(path: Optional[Path] = None) -> List[Dict[str, Any]]:
     source = path or practice_questions_path()
     records: List[Dict[str, Any]] = []

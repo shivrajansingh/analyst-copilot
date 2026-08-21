@@ -4,7 +4,8 @@
 |------|------|
 | `practice-questions.jsonl` | Original 136 labeled questions (answer key) |
 | `questions-by-doc.json` | Grouped eval input: `[{doc_path, questions}]` |
-| `eval-results.json` | Model outputs from `scripts/eval/run_practice.py` (gitignored) |
+| `questions-by-doc-results.json` | Answers from `scripts/examples/run_all_questions.py` (gitignored) |
+| `eval-results.json` | Flat model outputs from `scripts/eval/run_practice.py` (gitignored) |
 
 Regenerate the grouped file:
 

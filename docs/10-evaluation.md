@@ -19,6 +19,15 @@ Rebuild it from the JSONL:
 PYTHONPATH=src python scripts/examples/build_questions_by_doc.py
 ```
 
+## Run all questions (grouped by filing)
+
+```bash
+python scripts/examples/run_all_questions.py
+python scripts/examples/run_all_questions.py --limit 5
+```
+
+Checks whether each `doc_path` is already embedded. If not, it indexes first, then answers that filing’s questions. Results are written to `data/questions-by-doc-results.json` after every question (safe to resume).
+
 ## Run
 
 ```bash

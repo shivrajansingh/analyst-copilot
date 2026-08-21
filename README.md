@@ -64,6 +64,23 @@ EMBEDDING_MODEL=bge-m3
 
 Chat and embeddings use **separate** models and URLs. `OPENAI_MODEL` is not used for embeddings.
 
+## Ask one question (index if needed)
+
+```bash
+python scripts/examples/ask.py filings/3M_2018_10K.htm "What is the FY2018 capital expenditure amount for 3M?"
+```
+
+If the filing is not indexed yet, the script embeds it first, then searches and prints the answer, page, and evidence. You can also pass a stem: `3M_2018_10K`.
+
+## Run all questions (index each filing if needed)
+
+```bash
+python scripts/examples/run_all_questions.py
+python scripts/examples/run_all_questions.py --limit 5
+```
+
+Reads `data/questions-by-doc.json`. For each document it embeds if needed, answers that filing’s questions, and updates `data/questions-by-doc-results.json` after every question. Re-running skips questions that already have answers.
+
 ## Examples
 
 ```bash
@@ -73,6 +90,7 @@ PYTHONPATH=src python scripts/examples/bm25_search_example.py
 PYTHONPATH=src python scripts/examples/hybrid_search_example.py
 PYTHONPATH=src python scripts/examples/hybrid_search_full_filing.py
 PYTHONPATH=src python scripts/examples/qa_example.py
+PYTHONPATH=src python scripts/examples/ask.py filings/3M_2018_10K.htm "What is FY2018 capex?"
 PYTHONPATH=src python scripts/examples/build_questions_by_doc.py
 PYTHONPATH=src python scripts/eval/run_practice.py --limit 5
 ```
