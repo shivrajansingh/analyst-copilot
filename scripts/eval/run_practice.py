@@ -65,6 +65,12 @@ def run_eval(limit: int, offset: int, output: Path) -> Path:
                         "evidence": answer.evidence_snippet,
                         "found": answer.found,
                         "page": answer.page,
+                        "abstention_reason": answer.abstention_reason,
+                        "retrieved_pages": (
+                            [hit.page.citation_page for hit in answer.retrieval.hits]
+                            if answer.retrieval is not None
+                            else []
+                        ),
                     },
                 }
             )
@@ -80,6 +86,8 @@ def run_eval(limit: int, offset: int, output: Path) -> Path:
                         "evidence": "",
                         "found": False,
                         "page": None,
+                        "abstention_reason": f"runner_error:{type(exc).__name__}",
+                        "retrieved_pages": [],
                     },
                 }
             )

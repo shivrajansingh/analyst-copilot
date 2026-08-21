@@ -19,6 +19,8 @@ storage/
 # Eval runs (model output)
 data/eval-results.json
 data/eval-results*.json
+data/eval-scores*.json
+data/eval-after-fix.json
 data/questions-by-doc-results.json
 
 # OS / IDE

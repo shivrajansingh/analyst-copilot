@@ -121,6 +121,14 @@ def answer_payload(result) -> Dict[str, Any]:
         "evidence": result.evidence_snippet,
         "found": result.found,
         "page": result.page,
+        # Diagnostics: distinguishes "never retrieved" from "retrieved but
+        # rejected", which are very different problems to fix.
+        "abstention_reason": result.abstention_reason,
+        "retrieved_pages": (
+            [hit.page.citation_page for hit in result.retrieval.hits]
+            if result.retrieval is not None
+            else []
+        ),
     }
 
 
@@ -182,6 +190,8 @@ def main() -> None:
                     "evidence": "",
                     "found": False,
                     "page": None,
+                    "abstention_reason": f"runner_error:{type(exc).__name__}",
+                    "retrieved_pages": [],
                 }
                 print(f"     ERROR: {exc}")
 

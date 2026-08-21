@@ -13,4 +13,4 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Hybrid retrieval](07-hybrid-retrieval.md) | Fusion, expansion, boost |
 | [Indexing services](08-indexing-services.md) | Orchestration and storage |
 | [Question answering](09-qa-pipeline.md) | LLM extract + verify + abstain |
-| [Evaluation runner](10-evaluation.md) | Loop practice questions → eval JSON |
+| [Evaluation](10-evaluation.md) | Answer runners + rubric scorer (+1 / 0 / −1) |
