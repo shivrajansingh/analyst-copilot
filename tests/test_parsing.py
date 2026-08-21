@@ -34,6 +34,9 @@ def test_hr_page_breaks_are_recognized():
         '<p style="page-break-after: always">',
         '<div style="page-break-after:always">',
         '<hr style="break-after:always">',
+        # GENERALMILLS_2019_10K and MICROSOFT_2016_10K mark boundaries this way
+        '<hr style="page-break-before:always">',
+        '<div style="page-break-before: always">',
     ):
         assert PAGE_BREAK_PATTERN.search(markup), f"not matched: {markup}"
 

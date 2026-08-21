@@ -148,8 +148,8 @@ Details: [docs/09-qa-pipeline.md](docs/09-qa-pipeline.md).
 
 ## Parsing strategy
 
-SEC HTML is split on `page-break-after: always`, matched on `<hr>`, `<p>` or `<div>` — `<hr>` accounts for 78 of the 79 filings, and matching only `<p>` sent nearly the whole corpus down the fallback path. Each segment becomes one page of plain text. Filings with no page-break markers at all (5, mostly short 8-Ks) fall back to fixed-size chunks.
+SEC HTML is split on `page-break-after: always` or `page-break-before: always`, matched on `<hr>`, `<p>` or `<div>`. `<hr>` accounts for 76 of the 79 filings; matching only `<p>` sent nearly the whole corpus down the fallback path. Each segment becomes one page of plain text. Only 3 filings — short 8-Ks with no page-break markers at all — fall back to fixed-size chunks.
 
-Citations use the 0-based `page_index`, which matches the practice key's `evidence_page_num` (74% exact, 90% within ±1). Printed footer numbers are parsed but not cited — they disagree with gold in both directions. See [docs/03-html-parsing.md](docs/03-html-parsing.md).
+Citations use the 0-based `page_index`, which matches the practice key's `evidence_page_num` (77% exact, 92% within ±1). Printed footer numbers are parsed but not cited — they disagree with gold in both directions. See [docs/03-html-parsing.md](docs/03-html-parsing.md).
 
 Indices record `PARSER_VERSION`, so a parsing change makes stale indices report as absent and they rebuild automatically instead of being silently reused.

@@ -10,12 +10,18 @@ from bs4 import BeautifulSoup
 
 from analyst_copilot.parsing.models import FilingDocument, Page
 
-# SEC filers mark page boundaries on several tags: <hr> dominates the corpus
-# (78 of 79 filings), while a minority use <p> or <div>. Matching only <p> sends
-# almost every filing down the character-chunking fallback, which destroys page
-# numbering. Also accept the CSS4 `break-after` spelling.
+# SEC filers mark page boundaries inconsistently, and every variant missed here
+# sends a whole filing down the character-chunking fallback, which destroys its
+# page numbering. Observed across the 79-filing corpus:
+#
+#   <hr>  page-break-after   74 filings
+#   <p>   page-break-after    1 filing  (3M_2018_10K)
+#   <hr>  page-break-before   2 filings (GENERALMILLS_2019_10K, MICROSOFT_2016_10K)
+#
+# `before` and `after` both mark the same boundary, so splitting on either
+# yields the same pages. The CSS4 `break-*` spelling is accepted too.
 PAGE_BREAK_PATTERN = re.compile(
-    r"<(?:p|hr|div)[^>]*(?:page-)?break-after\s*:\s*always[^>]*>",
+    r"<(?:p|hr|div)[^>]*(?:page-)?break-(?:after|before)\s*:\s*always[^>]*>",
     re.IGNORECASE,
 )
 SEC_TEXT_PATTERN = re.compile(r"<TEXT>(.*)</TEXT>", re.DOTALL | re.IGNORECASE)
@@ -24,7 +30,7 @@ PRINTED_PAGE_PATTERN = re.compile(r"\b(\d{1,4})\s*$")
 # Bump when a parsing change alters page boundaries or numbering. Persisted
 # indices record this and are treated as absent when it no longer matches, so a
 # parser fix can never be masked by stale embeddings on disk.
-PARSER_VERSION = "2"
+PARSER_VERSION = "3"
 
 # Fallback when a filing carries no page-break markers at all.
 FALLBACK_CHARS_PER_PAGE = 3500
@@ -88,7 +94,7 @@ def parse_filing_html(path: Union[Path, str], doc_name: Optional[str] = None) ->
 
     Strategy:
     1. Extract SEC <TEXT> block when present.
-    2. Split on `page-break-after: always` on <hr>/<p>/<div>.
+    2. Split on `page-break-{after,before}: always` on <hr>/<p>/<div>.
     3. Extract printed footer page numbers where possible (reference only —
        see Page.citation_page for why they are not used for citations).
     4. Fall back to fixed-size text chunks when no page breaks exist.

@@ -60,6 +60,27 @@ def numbers_in(text: str) -> List[float]:
     return values
 
 
+def _looks_like_year(value: float) -> bool:
+    return value.is_integer() and 1900 <= value <= 2100
+
+
+def headline_value(gold_values: List[float]) -> float:
+    """
+    The figure a gold answer is actually asserting.
+
+    Naively taking the first number breaks on golds that lead with the fiscal
+    year -- "Pepsico's restructuring costs in FY2022 amounted to $411 million"
+    would be checked against 2022, which any answer about FY2022 satisfies, so a
+    wrong figure would score as correct. Drop year-like values when the answer
+    carries a real figure as well.
+    """
+    if len(gold_values) > 1:
+        non_years = [v for v in gold_values if not _looks_like_year(v)]
+        if non_years:
+            return non_years[0]
+    return gold_values[0]
+
+
 def numeric_match(gold_text: str, model_text: str, rel_tol: float) -> Optional[bool]:
     """
     True/False when the gold answer's figure is decidable, None when gold has none.
@@ -73,8 +94,7 @@ def numeric_match(gold_text: str, model_text: str, rel_tol: float) -> Optional[b
     if not model_values:
         return False
 
-    # The headline figure of a gold answer is its first number.
-    target = gold_values[0]
+    target = headline_value(gold_values)
     for scale in SCALES:
         scaled = target * scale
         if scaled == 0:
