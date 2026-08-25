@@ -26,4 +26,16 @@ PYTHONPATH=src python scripts/examples/bm25_search_example.py
 PYTHONPATH=src pytest tests/test_bm25.py
 ```
 
-BM25 alone can rank narrative “cash flow” pages above the actual statement. Hybrid retrieval is required for citation quality.
+## What BM25 is worth here
+
+Measured over all 136 practice questions, BM25 alone reaches **16.2%**
+gold-page recall@5 against **58.1%** for dense retrieval, and it adds roughly
+one question to the fused result. It is kept at `hybrid_bm25_weight = 0.1`.
+
+That is not a verdict on lexical retrieval — it is a verdict on lexical
+retrieval *over whole pages*. BM25 normalises by document length and these
+pages run from 200 to 47,000 characters, so its natural strength (exact strings
+like `1.500% Notes due 2026`) is diluted away. Re-measure after within-page
+chunking, not before.
+
+Full analysis: [Document retrieval](07-hybrid-retrieval.md).

@@ -10,7 +10,7 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Embeddings](04-embeddings.md) | OpenAI-compatible `/v1/embeddings` |
 | [BM25 retrieval](05-bm25-retrieval.md) | Lexical index and search |
 | [Vector retrieval](06-vector-retrieval.md) | Dense page embeddings |
-| [Hybrid retrieval](07-hybrid-retrieval.md) | Fusion, expansion, boost |
+| [Document retrieval](07-hybrid-retrieval.md) | **End-to-end retrieval logic**, fusion, measured recall, limits |
 | [Indexing services](08-indexing-services.md) | Orchestration and storage |
 | [Question answering](09-qa-pipeline.md) | LLM extract + verify + abstain |
 | [Evaluation](10-evaluation.md) | Answer runners + rubric scorer (+1 / 0 / −1) |
