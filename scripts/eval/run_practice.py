@@ -20,12 +20,19 @@ from analyst_copilot.data import load_questions_by_doc, questions_by_doc_path, w
 from analyst_copilot.services.qa import QuestionAnsweringService
 
 
+def question_text(item: Any) -> str:
+    """Grouped questions are plain strings in the old layout, dicts in the new one."""
+    if isinstance(item, str):
+        return item
+    return str(item["question"])
+
+
 def flatten_items(grouped: List[Dict[str, Any]], limit: int, offset: int) -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
     for block in grouped:
         doc_path = block["doc_path"]
         for question in block["questions"]:
-            items.append({"doc_path": doc_path, "question": question})
+            items.append({"doc_path": doc_path, "question": question_text(question)})
     start = max(offset, 0)
     end = start + limit if limit > 0 else len(items)
     return items[start:end]

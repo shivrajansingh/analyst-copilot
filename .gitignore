@@ -17,16 +17,23 @@ storage/
 *.faiss
 
 # Eval runs (model output)
+data/*
 data/eval-results.json
 data/eval-results*.json
 data/eval-scores*.json
 data/eval-after-fix.json
+data/eval-20.json
 data/questions-by-doc-results.json
 
 # OS / IDE
 .DS_Store
 .idea/
 .vscode/
+
+# others
+review/*
+scripts/eval/*
+
 
 # Logs
 *.log
