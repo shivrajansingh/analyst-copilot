@@ -63,6 +63,9 @@ class FakeStore:
     def load_metadata(self, doc_name):
         return self._metadata_factory(doc_name) if doc_name in self.present else None
 
+    def load_pages(self, doc_name):
+        return None
+
     def index_dir(self, doc_name):
         return self._root / doc_name
 
@@ -322,3 +325,32 @@ def test_chat_on_an_unindexed_filing_is_409(client):
 def test_chat_validates_the_request_body(client):
     assert client.post(f"{API}/chat", json={"doc_name": INDEXED, "question": "hi"}).status_code == 422
     assert client.post(f"{API}/chat", json={"question": "What is capex?"}).status_code == 422
+
+
+def test_page_endpoint_returns_text_and_the_embedding_boundary(client, monkeypatch):
+    """BM25 sees the whole page; the vector index only saw the first N chars."""
+    long_text = "A" * 6000
+    _, vector_store = client.stores
+    monkeypatch.setattr(
+        vector_store,
+        "load_pages",
+        lambda doc_name: [Page(doc_name=doc_name, page_index=0, text=long_text)],
+        raising=False,
+    )
+    body = client.get(f"{API}/filings/{INDEXED}/pages/0").json()
+    assert body["char_count"] == 6000
+    assert body["embedded_chars"] == 2500
+    assert body["truncated"] is True
+    assert body["display_page"] == 1
+
+
+def test_page_endpoint_404s_for_a_page_the_filing_does_not_have(client, monkeypatch):
+    _, vector_store = client.stores
+    monkeypatch.setattr(
+        vector_store,
+        "load_pages",
+        lambda doc_name: [Page(doc_name=doc_name, page_index=0, text="only page")],
+        raising=False,
+    )
+    response = client.get(f"{API}/filings/{INDEXED}/pages/99")
+    assert response.status_code == 404

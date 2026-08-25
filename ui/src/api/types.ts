@@ -86,3 +86,15 @@ export interface HealthResponse {
 export interface ApiErrorBody {
   error: { code: string; message: string }
 }
+
+export interface PageResponse {
+  doc_name: string
+  page: number
+  display_page: number
+  page_count: number
+  text: string
+  char_count: number
+  /** How much of this page the vector index actually embedded. */
+  embedded_chars: number
+  truncated: boolean
+}

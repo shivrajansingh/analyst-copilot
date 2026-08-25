@@ -14,6 +14,7 @@ from analyst_copilot.api.schemas import (
     FilingListResponse,
     FilingSummary,
     IndexingJobResponse,
+    PageResponse,
 )
 
 router = APIRouter(prefix="/filings", tags=["filings"])
@@ -58,6 +59,26 @@ def list_filings(
         filings.summary(doc_name) for doc_name in filings.list_known()
     ]
     return FilingListResponse(filings=summaries)
+
+
+@router.get(
+    "/{doc_name}/pages/{page}",
+    response_model=PageResponse,
+    summary="Read one page of a filing",
+)
+def filing_page(
+    doc_name: str,
+    page: int,
+    filings: FilingService = Depends(get_filing_service),
+) -> PageResponse:
+    """
+    The page text behind a citation.
+
+    Showing the cited snippet inside its whole page is the difference between a
+    citation and a proof -- a figure read out of context is exactly what an
+    analyst cannot act on.
+    """
+    return filings.page(doc_name, page)
 
 
 @router.get(

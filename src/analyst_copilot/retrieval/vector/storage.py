@@ -78,6 +78,23 @@ class VectorIndexStore:
 
         return VectorIndex(metadata=metadata, pages=pages, vectors=vectors)
 
+    def load_pages(self, doc_name: str) -> Optional[List[Page]]:
+        """
+        Read a filing's page text without loading its vectors.
+
+        `pages.json` holds the full page text -- only the copy sent to the
+        embedding API was truncated -- so this is the cheapest way to show a
+        reader what is actually on a page.
+        """
+        pages_path = self.index_dir(doc_name) / _PAGES_FILE
+        if not pages_path.exists():
+            return None
+        try:
+            payload = json.loads(pages_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return self._pages_from_dict(payload, doc_name)
+
     def load_metadata(self, doc_name: str) -> Optional[VectorIndexMetadata]:
         """
         Read an index's metadata without loading its vectors.

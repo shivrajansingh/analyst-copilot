@@ -15,11 +15,17 @@ from fastapi import UploadFile
 from analyst_copilot.api.config import ApiSettings
 from analyst_copilot.api.errors import (
     FileTooLarge,
+    FilingNotFound,
     InvalidFilingName,
     UnsupportedFileType,
 )
 from analyst_copilot.api.jobs import IndexingJob, IndexingJobManager, JobStatus
-from analyst_copilot.api.schemas import FilingSummary, IndexInfo, IndexState
+from analyst_copilot.api.schemas import (
+    FilingSummary,
+    IndexInfo,
+    IndexState,
+    PageResponse,
+)
 from analyst_copilot.retrieval.bm25.storage import BM25IndexStore
 from analyst_copilot.retrieval.vector.storage import VectorIndexStore
 from analyst_copilot.services.indexing import HybridFilingIndexer
@@ -203,6 +209,37 @@ class FilingService:
         if job_status == JobStatus.FAILED:
             return IndexState.FAILED
         return IndexState.MISSING
+
+    def page(self, doc_name: str, page_index: int) -> PageResponse:
+        """
+        One page's full text, plus how much of it was embedded.
+
+        Reads the stored page text rather than re-parsing the filing: the
+        indexed text is what retrieval and the verifier actually worked from,
+        so it is the only text a reader should be shown as evidence.
+        """
+        pages = self._vector_store.load_pages(doc_name)
+        if pages is None:
+            raise FilingNotFound(f"No indexed pages for {doc_name!r}.")
+
+        match = next((page for page in pages if page.page_index == page_index), None)
+        if match is None:
+            raise FilingNotFound(
+                f"{doc_name} has {len(pages)} pages; page {page_index} is not one of them."
+            )
+
+        metadata = self._vector_store.load_metadata(doc_name)
+        cap = metadata.max_chars_per_page if metadata else len(match.text)
+        return PageResponse(
+            doc_name=doc_name,
+            page=match.page_index,
+            display_page=match.page_index + 1,
+            page_count=len(pages),
+            text=match.text,
+            char_count=len(match.text),
+            embedded_chars=min(cap, len(match.text)),
+            truncated=len(match.text) > cap,
+        )
 
     def list_known(self) -> List[str]:
         """

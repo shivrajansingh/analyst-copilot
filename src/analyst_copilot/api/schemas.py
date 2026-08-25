@@ -118,6 +118,26 @@ class Evidence(BaseModel):
     snippet: str
 
 
+class PageResponse(BaseModel):
+    """
+    One page of a filing, as the retrievers see it.
+
+    `embedded_chars` is the part of the page the vector index actually embedded.
+    BM25 indexes the whole page, so on a long page the two retrievers are
+    working from different amounts of text -- which is exactly why some pages
+    are findable lexically and invisible semantically.
+    """
+
+    doc_name: str
+    page: int
+    display_page: int
+    page_count: int
+    text: str
+    char_count: int
+    embedded_chars: int
+    truncated: bool
+
+
 class ChatRequest(BaseModel):
     doc_name: str = Field(min_length=1, description="Filing to answer from.")
     question: str = Field(min_length=3, max_length=2000)
