@@ -56,12 +56,16 @@ class Settings(BaseSettings):
 
     # Retrieval
     retrieval_max_chars_per_page: int = 2500
-    hybrid_bm25_weight: float = 0.45
-    hybrid_vector_weight: float = 0.55
+    # Measured on all 136 practice questions (gold-page recall@5): BM25 16%,
+    # vector 58%, shipped RRF+weighted hybrid 36%, weighted-only 59%. RRF's
+    # rank compression let consensus outvote confident retrievers; end-to-end
+    # rubric went +1 -> +7 when it was disabled. Re-measure after chunking.
+    hybrid_bm25_weight: float = 0.1
+    hybrid_vector_weight: float = 0.9
     hybrid_candidate_pool: int = 80
     hybrid_rrf_k: int = 60
-    hybrid_rrf_weight: float = 0.6
-    hybrid_weighted_weight: float = 0.4
+    hybrid_rrf_weight: float = 0.0
+    hybrid_weighted_weight: float = 1.0
     hybrid_statement_boost: float = 1.25
 
     # QA / abstention
