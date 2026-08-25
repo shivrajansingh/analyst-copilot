@@ -1,8 +1,69 @@
 # Analyst Copilot — Frontend Plan
 
-**Status:** plan only. No code written yet.
+**Status:** the React app is built and running against the live API. The
+persistence and deployment layers — Postgres, real auth, Docker Compose — are not.
 **Scope:** a React application in `ui/`, a Postgres-backed API, and a Docker Compose
 stack that runs the whole product.
+
+See [§0 Where we are](#0-where-we-are) for done vs remaining.
+
+---
+
+## 0. Where we are
+
+The app runs today: `npm run dev` in `ui/` against `scripts/serve_api.py`, and every
+screen is wired to real data. What is missing is everything that has to survive a
+restart or a second machine.
+
+### Done
+
+| Area | What exists |
+|---|---|
+| **Scaffold** | Vite + React 18 + TypeScript, path aliases, `tsc --noEmit` clean, 115 kB gzipped build |
+| **Design system** | Token-only colour system (no hex in components), light + dark from one set, Inter + JetBrains Mono, motion with `prefers-reduced-motion` |
+| **Primitives** | Button, Badge, Card, Input, Skeleton, Tooltip, Toast, Modal, Sheet, EmptyState — hand-written, all restylable |
+| **API layer** | Typed `fetch` client, `ApiError` with codes, auth-header plumbing, TanStack Query hooks |
+| **Login** | Demo auth with one-click entry, labelled in-UI as not a security boundary |
+| **App shell** | Persistent rail ≥lg, drawer below, conversation history grouped by date, theme toggle |
+| **Chat** | Filing picker showing per-index state, composer with suggestions and Enter/Shift+Enter, staged thinking indicator, answer card, decline card, error card |
+| **Evidence** | Citation chip · answer card · cited page with **show-full-page** · retrieval trace with per-retriever score bars · verification strip · **page viewer modal** with both retrievers' scores and the embedding boundary drawn in the text |
+| **Filings** | Dropzone with client-side type/size checks, job progress against the 600 s budget, filters, search, table with the two independent badges |
+| **Filing detail** | Side-by-side BM25 / Embeddings metadata cards |
+| **Settings** | Live provider readout (read-only) + the embedding-model invalidation warning |
+
+**API changes already shipped** (`939e662`, `ca32f8d`):
+
+- `GET /filings` reports `bm25` and `vector` state independently, with model, dimensions, parser version, size and build time
+- `POST /chat` returns `retrieval[]` with rank, fused, BM25 and vector scores, and `cited`
+- `GET /filings/{doc}/pages/{n}` returns page text, `char_count`, `embedded_chars`, `truncated`
+- `load_metadata`, `is_stale`, `load_pages` on both index stores — 78 filings summarised in 0.08 s
+
+### Remaining
+
+Ordered by what blocks what.
+
+| # | Work | Blocks |
+|---|---|---|
+| **R1** | **Docker Compose**: `db`, `migrate`, `api`, `ui` (nginx). Mount `filings/` and `storage/` per §12 Q3 | Everything below; also the live session |
+| **R2** | **Postgres + SQLAlchemy 2.0 + Alembic**, schema per §8 | R3–R6 |
+| **R3** | **Real auth**: `/auth/login`, `/auth/me`, `/auth/logout`; bcrypt, JWT, seeded demo user. Multi-user per §12 Q1 | Replaces the localStorage session |
+| **R4** | **Conversations**: the five endpoints in §7.2, scoped per user | Replaces localStorage history |
+| **R5** | **Provider settings**: GET/PUT/test, global scope per §12 Q2, keys encrypted at rest and masked in responses | Makes `/settings` writable |
+| **R6** | **Job persistence**: move `IndexingJobManager` state into Postgres; `GET /jobs` feed | Job history surviving restart |
+| **R7** | **Reindex**: `POST /filings/{doc}/reindex`, `reindex-all`, `DELETE /filings/{doc}` | The bulk-rebuild path after an embedding-model change |
+| **R8** | **Chat threading fields**: `conversation_id` in, `message_id` / `latency_ms` out | R4 |
+| **R9** | **Frontend tests**: Vitest + Testing Library + MSW against the real contract | — |
+| **R10** | **Polish**: full keyboard path, a11y audit, error/empty states on the remaining screens | — |
+
+**Explicitly not doing:** retrieval settings in the UI (§12 Q4 — ship the recommended
+config, do not expose the weights).
+
+### The gap that matters
+
+Auth and chat history are **localStorage-backed behind adapters shaped like the planned
+API rows**. They work, and swapping each is one file — `auth.store.ts` and
+`conversations.store.ts`. But until R2–R4 land, a session does not survive a different
+browser and history is not shared between users. The UI is finished; the product is not.
 
 ---
 
@@ -57,37 +118,40 @@ a custom design language).
 
 ## 3. Directory layout
 
+As built. `components/ui/` are hand-written primitives rather than a vendored
+component library, so every surface stays restylable.
+
 ```text
 ui/
 ├── PLAN.md                     ← this file
-├── Dockerfile                  multi-stage: node build → nginx serve
-├── nginx.conf                  SPA fallback + /api proxy to the api service
 ├── index.html
 ├── package.json / tsconfig.json / vite.config.ts / tailwind.config.ts
 └── src/
     ├── main.tsx, App.tsx, router.tsx
     ├── api/
     │   ├── client.ts           fetch wrapper: auth header, error → ApiError
-    │   ├── types.ts            generated-by-hand mirrors of the API schemas
-    │   └── endpoints/          auth.ts filings.ts chat.ts conversations.ts settings.ts jobs.ts
-    ├── hooks/                  useAuth, useFilings, useJobPolling, useConversation …
-    ├── stores/                 auth.store.ts, ui.store.ts
+    │   ├── types.ts            hand-written mirrors of the API schemas
+    │   └── endpoints/          filings.ts · chat.ts · pages.ts · health.ts
+    ├── hooks/                  useFilings · useJobPolling · usePage · useHealth
+    ├── stores/                 auth.store · ui.store · conversations.store
     ├── components/
-    │   ├── ui/                 shadcn primitives (Button, Dialog, Badge, Toast…)
-    │   ├── layout/             AppShell, Sidebar, TopBar, CommandPalette
-    │   ├── chat/               MessageList, MessageBubble, Composer, FilingPicker,
-    │   │                       AnswerCard, DeclineCard, ThinkingIndicator
-    │   ├── evidence/           EvidencePanel, EvidenceCard, CitationChip,
-    │   │                       PageViewer, RetrievalTrace, VerificationStrip
-    │   ├── filings/            FilingTable, FilingRow, IndexBadge, AddFilingDropzone,
-    │   │                       JobProgress, FilingDetail
-    │   └── settings/           ProviderForm, ConnectionTest, ReindexWarning
-    ├── pages/                  Login, Chat, Filings, FilingDetail, Settings, NotFound
-    ├── lib/                    format.ts, cn.ts, constants.ts
+    │   ├── ui/                 Button Badge Card Input Skeleton Tooltip
+    │   │                       Toast Modal Sheet EmptyState
+    │   ├── layout/             AppShell · Sidebar
+    │   ├── chat/               Composer · AnswerCard · DeclineCard
+    │   │                       FilingPicker · ThinkingIndicator
+    │   ├── evidence/           EvidencePanel · CitedPage · PageViewerModal
+    │   │                       PageText · RetrievalTrace · VerificationStrip
+    │   │                       CitationChip
+    │   └── filings/            FilingTable · IndexBadge · AddFilingDropzone
+    │                           JobProgress
+    ├── pages/                  Login · Chat · Filings · FilingDetail · Settings
+    ├── lib/                    cn.ts · format.ts
     └── styles/                 globals.css (design tokens)
 ```
 
----
+**Not yet present**, and listed in the original plan: `components/settings/`
+(arrives with R5), and a test tree (R9).
 
 ## 4. Screens
 
@@ -297,16 +361,20 @@ evidence → open page.
 
 ### 7.1 Existing endpoints that change
 
+✅ = shipped. Everything else is outstanding.
+
 | Endpoint                                | Change                                                                                                    | Why                                                                                                           |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | *all except* `/health`, `/auth/*` | Require`Authorization: Bearer`                                                                          | Authentication                                                                                                |
-| `GET /filings`                        | `indexed: bool` → `bm25: {…}` + `vector: {…}` objects                                            | Two badges need two states                                                                                    |
+| ✅ `GET /filings`                     | `indexed: bool` → `bm25: {…}` + `vector: {…}` objects                                            | Two badges need two states                                                                                    |
 | `GET /filings/{doc}/status`           | Add`phase_started_at`, `queued_position`                                                              | Honest progress bar                                                                                           |
 | `POST /chat`                          | Accept`conversation_id`; return `message_id`, `conversation_id`, `latency_ms`                     | Chat history                                                                                                  |
-| `POST /chat`                          | `retrieved_pages: int[]` → `retrieval: [{page, rank, fused_score, bm25_score, vector_score, cited}]` | The "why this page" panel.`ScoredPage` already carries these; they are dropped at the schema boundary today |
+| ✅ `POST /chat`                       | `retrieved_pages: int[]` → `retrieval: [{page, rank, fused_score, bm25_score, vector_score, cited}]` | The "why this page" panel.`ScoredPage` already carries these; they are dropped at the schema boundary today |
 | `POST /filings`                       | Record uploader + original filename in Postgres                                                           | Attribution in the library                                                                                    |
 
 ### 7.2 New endpoints
+
+All outstanding except the one marked shipped.
 
 **Auth**
 
@@ -343,7 +411,7 @@ DELETE /api/v1/conversations/{id}
 GET    /api/v1/filings/{doc}             → detail: both index metadata blocks
 POST   /api/v1/filings/{doc}/reindex     {targets: ["bm25","vector"]} → job
 DELETE /api/v1/filings/{doc}             → drop indices
-GET    /api/v1/filings/{doc}/pages/{n}   → {page, display_page, text, char_count}
+GET    /api/v1/filings/{doc}/pages/{n}   → text, char_count, embedded_chars, truncated   ✅ SHIPPED
 POST   /api/v1/filings/reindex-all       → bulk job (after an embedding-model change)
 ```
 
@@ -447,16 +515,22 @@ every search slower.
 
 ## 10. Delivery phases
 
-| Phase       | Deliverable                                                              | Exit criterion                                                |
-| ----------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| **0** | Compose stack + Postgres + Alembic + auth                                | `docker compose up` → log in as demo, `/health` green    |
-| **1** | App shell, filing library, add-filing + live job status                  | Upload a filing, watch it reach`ready`, both badges correct |
-| **2** | Chat + answer card + evidence panel                                      | Ask a question, get a cited answer and a page-level proof     |
-| **3** | Conversations, history sidebar, decline card                             | Reload the browser and the thread is intact                   |
-| **4** | Settings: providers, connection test, reindex warning                    | Change a model from the UI and see it take effect             |
-| **5** | Polish: dark mode, empty/error/loading states, keyboard paths, a11y pass | —                                                            |
+| Phase | Deliverable | Status |
+|---|---|---|
+| **0** | Compose stack + Postgres + Alembic + auth | ⬜ **Not started** — R1–R3 |
+| **1** | App shell, filing library, add-filing + live job status | ✅ **Done** — upload reaches `ready`, both badges correct |
+| **2** | Chat + answer card + evidence panel | ✅ **Done** — cited answers with a page-level proof, plus the page viewer |
+| **3** | Conversations, history sidebar, decline card | 🟨 **Partial** — all of it works, on localStorage rather than Postgres (R4) |
+| **4** | Settings: providers, connection test, reindex warning | 🟨 **Partial** — reads live config and warns; not writable (R5, R7) |
+| **5** | Polish: dark mode, empty/error/loading states, keyboard paths, a11y pass | 🟨 **Partial** — themes, empty/loading/error states done; a11y audit outstanding (R10) |
 
-Phases 1 and 2 are the graded surfaces; everything else supports them.
+**Phases 1 and 2 — the graded surfaces — are complete.** What remains is persistence
+and deployment, which is Phase 0 arriving late: the UI was built first because it could
+be, against an API that already worked.
+
+That ordering was a deliberate trade. It got the graded surfaces demonstrable early, at
+the cost of two adapters (`auth.store.ts`, `conversations.store.ts`) that will be thrown
+away when R3 and R4 land.
 
 ---
 
@@ -469,6 +543,12 @@ Phases 1 and 2 are the graded surfaces; everything else supports them.
 - *Two index badges, not one.* They are two artefacts that fail independently.
 - *Index files stay on disk, Postgres holds product state.*
 - *Same-origin `/api` via the nginx proxy.* No bundled API URL, no CORS in production.
+- *Multi-user, conversations private per user.* (§12 Q1)
+- *Provider settings are global*, not per-user — the firm configures its endpoints. (§12 Q2)
+- *`storage/` is mounted into the container*, so the stack boots with all 78 filings
+  searchable rather than showing an empty library. (§12 Q3)
+- *Retrieval weights are not exposed in the UI.* Ship the measured configuration; a
+  weights panel in front of a reviewer is a footgun, not a feature. (§12 Q4)
 
 **Risks**
 
@@ -482,7 +562,7 @@ Phases 1 and 2 are the graded surfaces; everything else supports them.
 
 ---
 
-## 12. Open questions for you
+## 12. Questions asked, and the answers given
 
 1. **Multi-user or single-tenant?** Are conversations private per user, or does the whole
    team see one shared history? Changes the queries and the sidebar.
@@ -496,3 +576,8 @@ Phases 1 and 2 are the graded surfaces; everything else supports them.
 4. **Retrieval settings in the UI** — worth exposing, given we know the current fusion
    config is costing recall, or keep the surface to providers only?
    Answer: Use recommended only
+
+All four are settled and folded into §11. The recommended fusion configuration referred
+to in Q4 has since been applied and measured — the rubric moved from **+1 to +7** across
+the 136 practice questions when RRF was disabled. See
+[docs/07-hybrid-retrieval.md](../docs/07-hybrid-retrieval.md).
