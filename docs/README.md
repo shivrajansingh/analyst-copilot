@@ -14,3 +14,4 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Indexing services](08-indexing-services.md) | Orchestration and storage |
 | [Question answering](09-qa-pipeline.md) | LLM extract + verify + abstain |
 | [Evaluation](10-evaluation.md) | Answer runners + rubric scorer (+1 / 0 / −1) |
+| [HTTP API](11-api.md) | FastAPI service: add filing, status, chat |

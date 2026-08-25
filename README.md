@@ -10,7 +10,7 @@ Backend for question-answering over SEC annual and quarterly filings.
 
 Parse a filing into pages, index with BM25 + embeddings, hybrid-search the right page, then ask the chat LLM. A verifier checks that cited numbers appear on that page. If evidence is weak, the system returns **not found in this filing**. `scripts/eval/score.py` grades answers against the practice key on the challenge rubric.
 
-There is no chat UI yet, and retrieval fusion plus the evidence window have known measured problems — see [PLAN.md](PLAN.md).
+There is an HTTP API (add filing, status, chat) but no browser UI yet, and retrieval fusion plus the evidence window have known measured problems — see [PLAN.md](PLAN.md).
 
 ## Project layout
 
@@ -96,6 +96,28 @@ python scripts/examples/run_all_questions.py --limit 5
 
 Reads `data/questions-by-doc.json`. For each document it embeds if needed, answers that filing’s questions, and updates `data/questions-by-doc-results.json` after every question. Re-running skips questions that already have answers.
 
+## Run the API
+
+```bash
+python scripts/serve_api.py          # http://127.0.0.1:8000, interactive docs at /docs
+```
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/filings` | Add a filing (multipart upload) — returns `202` + a job to poll |
+| `GET` | `/api/v1/filings/{doc_name}/status` | `queued → parsing → embedding → saving → ready` / `failed` |
+| `GET` | `/api/v1/filings` | Filings the service can answer from |
+| `POST` | `/api/v1/chat` | Ask one question of one filing |
+| `GET` | `/api/v1/health` | Models in use, filings indexed |
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/chat -H 'Content-Type: application/json' \
+  -d '{"doc_name": "3M_2018_10K", "question": "What is the FY2018 capital expenditure?"}'
+```
+
+Declining is a normal `200` with `"found": false` and `"evidence": null`, not an
+error. Details: [docs/11-api.md](docs/11-api.md).
+
 ## Examples
 
 ```bash
@@ -141,7 +163,7 @@ PYTHONPATH=src pytest
 
 1. Hybrid retrieve top pages for the selected filing.
 2. Prompt the chat model with those excerpts; require JSON (`answer`, `page`, `evidence_snippet`, or `not_found`).
-3. Verify: cited page must be in the retrieved set; numbers in the answer must appear on that page.
+3. Verify: cited page must be in the retrieved set; every figure in the answer must trace back to a figure on that page, comparing significant digits so a filing printed in millions still supports an answer given in billions.
 4. Otherwise abstain: **not found in this filing**.
 
 Details: [docs/09-qa-pipeline.md](docs/09-qa-pipeline.md).
@@ -150,6 +172,6 @@ Details: [docs/09-qa-pipeline.md](docs/09-qa-pipeline.md).
 
 SEC HTML is split on `page-break-after: always` or `page-break-before: always`, matched on `<hr>`, `<p>` or `<div>`. `<hr>` accounts for 76 of the 79 filings; matching only `<p>` sent nearly the whole corpus down the fallback path. Each segment becomes one page of plain text. Only 3 filings — short 8-Ks with no page-break markers at all — fall back to fixed-size chunks.
 
-Citations use the 0-based `page_index`, which matches the practice key's `evidence_page_num` (77% exact, 92% within ±1). Printed footer numbers are parsed but not cited — they disagree with gold in both directions. See [docs/03-html-parsing.md](docs/03-html-parsing.md).
+Citations use the 0-based `page_index`, which matches the practice key's `evidence_page_num` (74% exact, 91% within ±1). Printed footer numbers are parsed but not cited — they disagree with gold in both directions. See [docs/03-html-parsing.md](docs/03-html-parsing.md).
 
 Indices record `PARSER_VERSION`, so a parsing change makes stale indices report as absent and they rebuild automatically instead of being silently reused.

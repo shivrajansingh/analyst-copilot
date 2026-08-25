@@ -39,6 +39,17 @@ class HybridFilingIndexer:
             vector_index=vector_index,
         )
 
+    def save_indices(self, indices: FilingIndices) -> None:
+        """
+        Persist both indices for an already-built filing.
+
+        Split out of `index_filing` so a caller that needs to report progress
+        can drive parse -> build -> save itself and still keep the pairing of
+        the two stores in one place.
+        """
+        self._bm25_store.save(indices.bm25_index)
+        self._vector_store.save(indices.vector_index)
+
     def index_filing(
         self,
         filing_path: Union[Path, str],
@@ -48,8 +59,7 @@ class HybridFilingIndexer:
         document = self.parse(filing_path, doc_name=doc_name)
         indices = self.build_indices(document)
         if save:
-            self._bm25_store.save(indices.bm25_index)
-            self._vector_store.save(indices.vector_index)
+            self.save_indices(indices)
         return indices
 
     def load_indices(self, doc_name: str) -> FilingIndices:

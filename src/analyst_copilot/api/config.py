@@ -1,0 +1,70 @@
+"""
+Settings for the HTTP service.
+
+Deliberately separate from `analyst_copilot.config.settings`: that module
+configures the QA pipeline (model endpoints, retrieval weights) and is shared by
+the CLI scripts and the tests. This one configures the process that serves it —
+ports, limits, concurrency — and is read by nothing but the API layer.
+
+All fields are environment-driven with an `API_` prefix, so `API_PORT=9000`
+configures the service without any risk of colliding with a pipeline variable.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import List, Tuple
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from analyst_copilot.config.settings import PROJECT_ROOT, get_settings
+
+
+class ApiSettings(BaseSettings):
+    """Configuration for the FastAPI application."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="API_",
+        env_file=PROJECT_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    title: str = "Analyst Copilot API"
+    version: str = "1.0.0"
+    description: str = (
+        "Question answering over SEC filings. Every answer carries the document "
+        "and page it came from, or declines."
+    )
+
+    host: str = "127.0.0.1"
+    port: int = 8000
+    root_path: str = ""
+
+    # A browser UI is served from a different origin during development.
+    cors_origins: List[str] = Field(default_factory=lambda: ["*"])
+
+    # Uploads. The largest filing in the practice corpus is ~16 MB.
+    max_upload_bytes: int = 32 * 1024 * 1024
+    upload_chunk_bytes: int = 1024 * 1024
+    allowed_suffixes: Tuple[str, ...] = (".htm", ".html")
+
+    # Indexing. Embedding is network-bound, so more workers mostly means more
+    # concurrent load on the embedding provider rather than more throughput.
+    max_concurrent_index_jobs: int = 2
+
+    # The challenge requires one filing to finish indexing within 10 minutes.
+    # Exposed on the status payload so a UI can show progress against it.
+    index_budget_seconds: int = 600
+
+    @property
+    def upload_dir(self) -> Path:
+        """Uploads land beside the corpus so an added filing behaves like a bundled one."""
+        return get_settings().filings_dir
+
+
+@lru_cache
+def get_api_settings() -> ApiSettings:
+    return ApiSettings()
