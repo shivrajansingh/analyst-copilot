@@ -34,6 +34,8 @@ class OpenAICompatibleEmbeddingClient(EmbeddingClient):
             api_key=settings.resolved_embedding_api_key,
             base_url=base_url,
             default_headers=default_headers,
+            timeout=120.0,
+            max_retries=2,
         )
         self._base_url = base_url
 
