@@ -40,9 +40,3 @@ class FilingIndexer:
         if save:
             self._store.save(index)
         return index
-
-    def load_index(self, doc_name: str) -> BM25Index:
-        return self._store.load(doc_name)
-
-    def index_exists(self, doc_name: str) -> bool:
-        return self._store.exists(doc_name)

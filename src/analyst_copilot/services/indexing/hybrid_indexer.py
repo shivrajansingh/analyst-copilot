@@ -11,7 +11,6 @@ from analyst_copilot.retrieval.bm25.builder import BM25IndexBuilder
 from analyst_copilot.retrieval.bm25.storage import BM25IndexStore
 from analyst_copilot.retrieval.vector.builder import VectorIndexBuilder
 from analyst_copilot.retrieval.vector.storage import VectorIndexStore
-from analyst_copilot.services.indexing.filing_indexer import FilingIndexer
 from analyst_copilot.services.indexing.models import FilingIndices
 
 
@@ -20,12 +19,10 @@ class HybridFilingIndexer:
 
     def __init__(
         self,
-        filing_indexer: Optional[FilingIndexer] = None,
         vector_builder: Optional[VectorIndexBuilder] = None,
         bm25_store: Optional[BM25IndexStore] = None,
         vector_store: Optional[VectorIndexStore] = None,
     ) -> None:
-        self._filing_indexer = filing_indexer or FilingIndexer()
         self._vector_builder = vector_builder or VectorIndexBuilder()
         self._bm25_store = bm25_store or BM25IndexStore()
         self._vector_store = vector_store or VectorIndexStore()

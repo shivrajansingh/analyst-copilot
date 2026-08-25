@@ -39,8 +39,7 @@ class AnswerVerifier:
             return VerificationResult(ok=False, reason="page_not_in_retrieval")
 
         page_text = cited.page.text
-        numbers = extract_normalized_numbers(extraction.answer)
-        if numbers and not numbers.intersection(extract_normalized_numbers(page_text)):
+        if not numbers_supported_by_page(extraction.answer, page_text):
             return VerificationResult(ok=False, reason="number_not_on_page")
 
         snippet = extraction.evidence_snippet
@@ -75,22 +74,52 @@ class AnswerVerifier:
         return None
 
 
-def extract_normalized_numbers(text: str) -> Set[str]:
-    """Normalize $1,577.00 / (1577) / 1577.0 into comparable tokens."""
-    found: Set[str] = set()
+# Filings print one scale ("Dollars in millions"), questions ask for another
+# ("answer in USD billions"), so a literal string match rejects correct answers:
+# an answer of 8.738 is the page's 8,738 read in billions. Comparing significant
+# digits instead is scale-free, and unlike a numeric tolerance it does not widen
+# into a band that some number on a dense financial page always falls inside.
+MIN_SIGNIFICANT_DIGITS = 3
+MIN_SHARED_DIGITS = 2
+
+
+def significant_digits(token: str) -> str:
+    """'8,738' -> '8738'; '8.70' -> '87'; '0.096' -> '96'; '(1,577)' -> '1577'."""
+    digits = re.sub(r"[^0-9]", "", token)
+    return digits.strip("0") or ("0" if digits else "")
+
+
+def _digit_forms(text: str) -> Set[str]:
+    forms: Set[str] = set()
     for match in _NUMBER_PATTERN.finditer(text.replace("(", " ").replace(")", " ")):
-        token = match.group(0).replace(",", "")
-        if token in {"-", "."}:
-            continue
-        try:
-            value = float(token)
-        except ValueError:
-            continue
-        if value.is_integer():
-            found.add(str(int(value)))
-        else:
-            found.add(f"{value:.4f}".rstrip("0").rstrip("."))
-    return found
+        token = significant_digits(match.group(0))
+        if len(token) >= MIN_SHARED_DIGITS:
+            forms.add(token)
+    return forms
+
+
+def numbers_supported_by_page(answer: str, page_text: str) -> bool:
+    """
+    Whether the figures in an answer are traceable to figures on the cited page.
+
+    An answer figure is supported when its significant digits are a prefix of a
+    page figure's (or vice versa) -- 8.7 or 8.738 both trace to the page's 8,738,
+    regardless of the unit the question asked for. At least one side must carry
+    MIN_SIGNIFICANT_DIGITS, so a bare "65" cannot be waved through by whatever
+    two-digit figure happens to sit on a page full of numbers.
+
+    An answer with no figures at all is left to the snippet check.
+    """
+    answer_forms = _digit_forms(answer)
+    if not answer_forms:
+        return True
+    page_forms = _digit_forms(page_text)
+    for a in answer_forms:
+        for p in page_forms:
+            shorter, longer = (a, p) if len(a) <= len(p) else (p, a)
+            if len(longer) >= MIN_SIGNIFICANT_DIGITS and longer.startswith(shorter):
+                return True
+    return False
 
 
 def _snippet_supported(snippet: str, page_text: str) -> bool:

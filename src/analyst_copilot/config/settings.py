@@ -66,7 +66,6 @@ class Settings(BaseSettings):
 
     # QA / abstention
     qa_top_k: int = 5
-    qa_min_retrieval_score: float = 0.25
     qa_max_evidence_chars: int = 2200
     qa_temperature: float = 0.0
     qa_max_tokens: int = 4096

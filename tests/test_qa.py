@@ -2,7 +2,7 @@ from analyst_copilot.parsing.models import Page
 from analyst_copilot.retrieval.models import ScoredPage
 from analyst_copilot.services.qa.models import LLMExtraction
 from analyst_copilot.services.qa.parser import parse_llm_extraction
-from analyst_copilot.services.qa.verifier import AnswerVerifier, extract_normalized_numbers
+from analyst_copilot.services.qa.verifier import AnswerVerifier
 
 
 def _hit(page_index: int, printed_page: int, text: str, score: float = 1.0) -> ScoredPage:
@@ -35,12 +35,6 @@ def test_parser_handles_fenced_json_and_abstention():
 def test_parser_abstains_on_invalid_json():
     extraction = parse_llm_extraction("I think capex was high.")
     assert extraction.not_found is True
-
-
-def test_extract_normalized_numbers():
-    numbers = extract_normalized_numbers("Capex was $1,577.00 million vs (1,420)")
-    assert "1577" in numbers
-    assert "1420" in numbers
 
 
 def test_verifier_accepts_number_on_cited_page():
@@ -123,3 +117,47 @@ def test_qa_service_abstains_when_model_not_found():
     assert result.found is False
     assert result.answer == "not found in this filing"
     assert result.abstention_reason == "model_abstain"
+
+
+def test_verifier_accepts_answer_rescaled_to_the_unit_the_question_asked_for():
+    """The filing prints millions; the question asked for billions."""
+    hits = [_hit(57, 58, "Property, plant and equipment - net 8,738 8,866")]
+    for answer in ("8.738", "$8.7 billion", "8,738 million"):
+        extraction = LLMExtraction(not_found=False, answer=answer, page=57)
+        result = AnswerVerifier().verify(extraction, hits)
+        assert result.ok is True, answer
+        assert result.page == 57
+
+
+def test_verifier_still_rejects_a_figure_that_is_not_on_the_page():
+    hits = [_hit(0, 1, "This page discusses dividends paid of 3,193 and 1,204.")]
+    extraction = LLMExtraction(not_found=False, answer="$1,577 million", page=0)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "number_not_on_page"
+
+
+def test_verifier_rejects_a_derived_figure_that_appears_nowhere():
+    """A computed ratio has no source figure to trace back to."""
+    hits = [_hit(0, 1, "Revenue 6,489 Property, plant and equipment - net 253 282")]
+    extraction = LLMExtraction(not_found=False, answer="24.26", page=0)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "number_not_on_page"
+
+
+def test_verifier_does_not_let_a_two_digit_figure_match_anything():
+    hits = [_hit(0, 1, "Segment results 12 34 56 78 91")]
+    extraction = LLMExtraction(not_found=False, answer="65 consecutive years", page=0)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "number_not_on_page"
+
+
+def test_significant_digits_is_scale_free():
+    from analyst_copilot.services.qa.verifier import significant_digits
+
+    assert significant_digits("8,738") == "8738"
+    assert significant_digits("8.70") == "87"
+    assert significant_digits("(1,577)") == "1577"
+    assert significant_digits("0.096") == "96"

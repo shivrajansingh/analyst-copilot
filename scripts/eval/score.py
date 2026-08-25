@@ -41,8 +41,18 @@ DEFAULT_REL_TOL = 0.02
 SCALES = (1.0, 1e3, 1e-3, 1e6, 1e-6, 1e9, 1e-9)
 
 _NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
-# A gold answer this short that carries a digit is a bare figure, not an argument.
-PROSE_WORD_THRESHOLD = 10
+_WORD = re.compile(r"[A-Za-z]+")
+
+# Words that dress a figure rather than assert anything of their own. A gold
+# answer built only from these plus a number is a bare figure.
+_UNIT_WORDS = frozenset(
+    """usd dollar dollars million millions billion billions thousand thousands
+    percent percentage percentage-point points bps times ratio approximately approx
+    about roughly around circa fy cy quarter year years the a an of in on at to
+    is was were are and or per share shares net total""".split()
+)
+# A bare figure may carry this many content words before it counts as prose.
+MAX_CONTENT_WORDS_FOR_FIGURE = 2
 
 
 # --------------------------------------------------------------------------- #
@@ -108,11 +118,25 @@ def numeric_match(gold_text: str, model_text: str, rel_tol: float) -> Optional[b
 
 
 def gold_is_bare_figure(record: Dict[str, Any]) -> bool:
-    """Whether the gold answer can be checked arithmetically rather than read."""
+    """
+    Whether the gold answer can be checked arithmetically rather than read.
+
+    Counting words was too blunt: "The consumer segment shrunk by 0.9%
+    organically" is seven words, so it was graded against the number 0.9 alone,
+    and an answer naming the right segment without restating the figure scored
+    -1 for being confidently wrong. What separates a figure from an argument is
+    not length but whether the words carry a claim, so count content words and
+    ignore the units and articles that decorate every figure.
+    """
     answer = str(record.get("answer") or "").strip()
     if not re.search(r"\d", answer):
         return False
-    return len(answer.split()) <= PROSE_WORD_THRESHOLD
+    content = [
+        word
+        for word in (w.lower() for w in _WORD.findall(answer))
+        if len(word) > 1 and word not in _UNIT_WORDS
+    ]
+    return len(content) <= MAX_CONTENT_WORDS_FOR_FIGURE
 
 
 # --------------------------------------------------------------------------- #

@@ -32,7 +32,6 @@ class QuestionAnsweringService:
         self._chat_client = chat_client
         self._verifier = verifier or AnswerVerifier()
         self._top_k = settings.qa_top_k
-        self._min_score = settings.qa_min_retrieval_score
         self._max_evidence_chars = settings.qa_max_evidence_chars
         self._temperature = settings.qa_temperature
         self._max_tokens = settings.qa_max_tokens
@@ -59,9 +58,6 @@ class QuestionAnsweringService:
 
         if not search.hits:
             return self._abstain(question, doc_name, "no_retrieval_hits", search)
-
-        if search.top_hit is not None and search.top_hit.score < self._min_score:
-            return self._abstain(question, doc_name, "low_retrieval_score", search)
 
         user_prompt = build_user_prompt(question, search.hits, self._max_evidence_chars)
         try:

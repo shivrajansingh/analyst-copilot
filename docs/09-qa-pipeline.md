@@ -29,7 +29,7 @@ question + doc_name
 
 ## Abstention reasons
 
-`no_retrieval_hits`, `low_retrieval_score`, `model_abstain`, `empty_answer`, `page_not_in_retrieval`, `number_not_on_page`, `snippet_not_on_page`.
+`no_retrieval_hits`, `model_abstain`, `empty_answer`, `page_not_in_retrieval`, `number_not_on_page`, `snippet_not_on_page`.
 
 ## Demo
 
