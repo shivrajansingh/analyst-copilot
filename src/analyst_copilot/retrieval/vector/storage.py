@@ -78,6 +78,44 @@ class VectorIndexStore:
 
         return VectorIndex(metadata=metadata, pages=pages, vectors=vectors)
 
+    def load_metadata(self, doc_name: str) -> Optional[VectorIndexMetadata]:
+        """
+        Read an index's metadata without loading its vectors.
+
+        A library view needs the model and page count for every filing at once;
+        `load` would decompress the whole embedding array to get them.
+        """
+        payload = self._read_metadata(doc_name)
+        if payload is None:
+            return None
+        try:
+            return self._metadata_from_dict(payload)
+        except KeyError:
+            return None
+
+    def is_stale(self, doc_name: str) -> bool:
+        """
+        Index files are present but cannot be searched as configured.
+
+        Distinct from absent: the vectors exist, they were just built by a
+        different parser, a different embedding model, or at a different
+        truncation cap. A UI should offer to rebuild rather than to add.
+        """
+        return self._read_metadata(doc_name) is not None and not self.exists(doc_name)
+
+    def _read_metadata(self, doc_name: str) -> Optional[Dict[str, Any]]:
+        """Parsed metadata when every index file is present, else None."""
+        target_dir = self.index_dir(doc_name)
+        if not all(
+            (target_dir / name).exists()
+            for name in (_METADATA_FILE, _VECTORS_FILE, _PAGES_FILE)
+        ):
+            return None
+        try:
+            return json.loads((target_dir / _METADATA_FILE).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
     def exists(self, doc_name: str) -> bool:
         """
         True only when a usable index is on disk.
@@ -86,15 +124,8 @@ class VectorIndexStore:
         different embedding model, is reported as absent so callers rebuild
         rather than search stale page boundaries.
         """
-        target_dir = self.index_dir(doc_name)
-        if not all(
-            (target_dir / name).exists()
-            for name in (_METADATA_FILE, _VECTORS_FILE, _PAGES_FILE)
-        ):
-            return False
-        try:
-            payload = json.loads((target_dir / _METADATA_FILE).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        payload = self._read_metadata(doc_name)
+        if payload is None:
             return False
         if payload.get("parser_version") != PARSER_VERSION:
             return False

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, status
 from analyst_copilot.api.dependencies import get_filing_service, get_job_manager
 from analyst_copilot.api.errors import FilingNotFound, JobNotFound
 from analyst_copilot.api.filings import FilingService
-from analyst_copilot.api.jobs import IndexingJobManager
+from analyst_copilot.api.jobs import IndexingJobManager, JobStatus
 from analyst_copilot.api.schemas import (
     FilingListResponse,
     FilingSummary,
@@ -48,9 +48,14 @@ async def add_filing(
 def list_filings(
     filings: FilingService = Depends(get_filing_service),
 ) -> FilingListResponse:
-    """Every filing with an index on disk, i.e. everything `/chat` can answer from."""
+    """
+    Every filing the service knows about, with each index's state.
+
+    Filings only half-indexed are included on purpose: the library is where a
+    failed embedding pass becomes visible.
+    """
     summaries: List[FilingSummary] = [
-        filings.summary(doc_name) for doc_name in filings.list_indexed()
+        filings.summary(doc_name) for doc_name in filings.list_known()
     ]
     return FilingListResponse(filings=summaries)
 
@@ -84,7 +89,7 @@ def filing_status(
     return IndexingJobResponse(
         job_id="",
         doc_name=doc_name,
-        status=summary.status,
+        status=JobStatus.READY,
         elapsed_seconds=0.0,
         budget_seconds=0,
         over_budget=False,

@@ -19,7 +19,9 @@ from analyst_copilot.api.errors import (
     UnsupportedFileType,
 )
 from analyst_copilot.api.jobs import IndexingJob, IndexingJobManager, JobStatus
-from analyst_copilot.api.schemas import FilingSummary
+from analyst_copilot.api.schemas import FilingSummary, IndexInfo, IndexState
+from analyst_copilot.retrieval.bm25.storage import BM25IndexStore
+from analyst_copilot.retrieval.vector.storage import VectorIndexStore
 from analyst_copilot.services.indexing import HybridFilingIndexer
 
 # A doc_name becomes a directory under storage/ and is echoed in citations, so
@@ -54,10 +56,16 @@ class FilingService:
         settings: ApiSettings,
         indexer: HybridFilingIndexer,
         jobs: IndexingJobManager,
+        bm25_store: Optional[BM25IndexStore] = None,
+        vector_store: Optional[VectorIndexStore] = None,
     ) -> None:
         self._settings = settings
         self._indexer = indexer
         self._jobs = jobs
+        # Read straight from the stores: the library needs metadata for every
+        # filing at once, and going through the indexer would load each index.
+        self._bm25_store = bm25_store or BM25IndexStore()
+        self._vector_store = vector_store or VectorIndexStore()
 
     # -- intake ----------------------------------------------------------- #
     def validate_upload(self, upload: UploadFile) -> str:
@@ -110,49 +118,144 @@ class FilingService:
     def is_indexed(self, doc_name: str) -> bool:
         return self._indexer.indices_exist(doc_name)
 
-    def status_of(self, doc_name: str) -> JobStatus:
+    def job_status_of(self, doc_name: str) -> Optional[JobStatus]:
         """
-        The filing's current state.
+        The status of this filing's job, or None when it has never had one.
 
-        An in-flight job wins over the on-disk answer, so a filing being
-        re-indexed reports its live phase rather than the stale index it is
-        about to replace.
+        None matters: a filing that was indexed by the bulk CLI has no job in
+        this process, and reporting a default of `queued` for it would render as
+        "building" forever.
         """
         active = self._jobs.active_job_for(doc_name)
         if active is not None:
             return active.status
-        if self.is_indexed(doc_name):
-            return JobStatus.READY
         last = next(
             (job for job in self._jobs.list_jobs() if job.doc_name == doc_name),
             None,
         )
-        return last.status if last is not None else JobStatus.QUEUED
+        return last.status if last is not None else None
 
     def summary(self, doc_name: str) -> FilingSummary:
-        indexed = self.is_indexed(doc_name)
-        page_count = None
-        if indexed:
-            try:
-                page_count = len(self._indexer.load_indices(doc_name).bm25_index.pages)
-            except Exception:  # noqa: BLE001 - a corrupt index must not break the listing
-                page_count = None
+        """The filing's page count plus the state of each index independently."""
+        job_status = self.job_status_of(doc_name)
+        bm25 = self._bm25_info(doc_name, job_status)
+        vector = self._vector_info(doc_name, job_status)
         return FilingSummary(
             doc_name=doc_name,
-            indexed=indexed,
-            page_count=page_count,
-            status=self.status_of(doc_name),
+            page_count=bm25.page_count or vector.page_count,
+            status=_roll_up(bm25.state, vector.state),
+            bm25=bm25,
+            vector=vector,
         )
 
-    def list_indexed(self) -> List[str]:
-        """Document names with a usable index on disk, alphabetically."""
-        from analyst_copilot.config.settings import get_settings
-
-        root = get_settings().storage_dir / "bm25_indices"
-        if not root.is_dir():
-            return []
-        return sorted(
-            path.name
-            for path in root.iterdir()
-            if path.is_dir() and self._indexer.indices_exist(path.name)
+    def _bm25_info(self, doc_name: str, job_status: Optional[JobStatus]) -> IndexInfo:
+        metadata = self._bm25_store.load_metadata(doc_name)
+        state = self._state_for(
+            usable=self._bm25_store.exists(doc_name),
+            stale=self._bm25_store.is_stale(doc_name),
+            job_status=job_status,
         )
+        return IndexInfo(
+            state=state,
+            page_count=metadata.page_count if metadata else None,
+            parser_version=metadata.parser_version if metadata else None,
+            model=metadata.tokenizer_version if metadata else None,
+            built_at=_built_at(self._bm25_store.index_dir(doc_name)),
+            size_bytes=_dir_size(self._bm25_store.index_dir(doc_name)),
+        )
+
+    def _vector_info(self, doc_name: str, job_status: Optional[JobStatus]) -> IndexInfo:
+        metadata = self._vector_store.load_metadata(doc_name)
+        state = self._state_for(
+            usable=self._vector_store.exists(doc_name),
+            stale=self._vector_store.is_stale(doc_name),
+            job_status=job_status,
+        )
+        return IndexInfo(
+            state=state,
+            page_count=metadata.page_count if metadata else None,
+            parser_version=metadata.parser_version if metadata else None,
+            model=metadata.embedding_model if metadata else None,
+            dimensions=metadata.dimensions if metadata else None,
+            built_at=_built_at(self._vector_store.index_dir(doc_name)),
+            size_bytes=_dir_size(self._vector_store.index_dir(doc_name)),
+        )
+
+    @staticmethod
+    def _state_for(
+        usable: bool,
+        stale: bool,
+        job_status: Optional[JobStatus],
+    ) -> IndexState:
+        """
+        A usable index on disk wins over any job state.
+
+        Otherwise a live job decides: a filing being re-indexed reads as
+        `building`, and one whose last attempt died reads as `failed` rather
+        than merely `missing` -- the difference between "add it" and "retry it".
+        """
+        if usable:
+            return IndexState.READY
+        if job_status is not None and not job_status.is_terminal:
+            return IndexState.BUILDING
+        if stale:
+            return IndexState.STALE
+        if job_status == JobStatus.FAILED:
+            return IndexState.FAILED
+        return IndexState.MISSING
+
+    def list_known(self) -> List[str]:
+        """
+        Every filing with an index directory, alphabetically.
+
+        Includes filings that only one retriever managed to index. A filing with
+        BM25 but no embeddings is precisely what the library exists to surface --
+        hiding it until both succeed would hide the failure.
+        """
+        names = set()
+        for store in (self._bm25_store, self._vector_store):
+            root = store.index_dir("_").parent
+            if root.is_dir():
+                names.update(path.name for path in root.iterdir() if path.is_dir())
+        names.update(job.doc_name for job in self._jobs.list_jobs())
+        return sorted(names)
+
+    def list_searchable(self) -> List[str]:
+        """Filings both retrievers can serve, i.e. what /chat will accept."""
+        return [name for name in self.list_known() if self.is_indexed(name)]
+
+
+def _built_at(index_dir: Path) -> Optional[float]:
+    metadata = index_dir / "metadata.json"
+    try:
+        return metadata.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _dir_size(index_dir: Path) -> Optional[int]:
+    try:
+        return sum(item.stat().st_size for item in index_dir.iterdir() if item.is_file())
+    except OSError:
+        return None
+
+
+_ROLL_UP_ORDER = (
+    IndexState.FAILED,
+    IndexState.BUILDING,
+    IndexState.STALE,
+    IndexState.MISSING,
+)
+
+
+def _roll_up(*states: IndexState) -> IndexState:
+    """
+    One headline state for a filing, worst-first.
+
+    A filing is only `ready` when every index is; anything else surfaces the
+    most actionable problem rather than averaging it away.
+    """
+    for candidate in _ROLL_UP_ORDER:
+        if candidate in states:
+            return candidate
+    return IndexState.READY

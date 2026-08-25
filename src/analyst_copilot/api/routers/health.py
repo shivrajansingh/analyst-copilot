@@ -24,5 +24,5 @@ def health(
         version=settings.version,
         chat_model=pipeline.openai_model or "(unset)",
         embedding_model=pipeline.resolved_embedding_model,
-        indexed_filings=len(filings.list_indexed()),
+        indexed_filings=len(filings.list_searchable()),
     )

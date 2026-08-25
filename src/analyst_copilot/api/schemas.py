@@ -7,12 +7,16 @@ wire format.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from enum import Enum
+from typing import TYPE_CHECKING, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from analyst_copilot.api.jobs import IndexingJob, JobStatus
 from analyst_copilot.services.qa.models import QAAnswer
+
+if TYPE_CHECKING:  # pragma: no cover
+    from analyst_copilot.retrieval.models import ScoredPage
 
 
 class HealthResponse(BaseModel):
@@ -23,13 +27,52 @@ class HealthResponse(BaseModel):
     indexed_filings: int
 
 
+class IndexState(str, Enum):
+    """
+    State of one retrieval index for one filing.
+
+    BM25 and embeddings are separate artefacts that fail independently -- the
+    lexical index is local and instant, embedding is a network call that can die
+    halfway -- so each reports its own state rather than sharing one flag.
+    """
+
+    READY = "ready"
+    BUILDING = "building"
+    STALE = "stale"
+    MISSING = "missing"
+    FAILED = "failed"
+
+
+class IndexInfo(BaseModel):
+    """One index's state and the provenance of what is on disk."""
+
+    state: IndexState
+    page_count: Optional[int] = None
+    parser_version: Optional[str] = None
+    model: Optional[str] = Field(
+        default=None,
+        description="Embedding model for the vector index; tokenizer version for BM25.",
+    )
+    dimensions: Optional[int] = None
+    built_at: Optional[float] = Field(default=None, description="Unix seconds.")
+    size_bytes: Optional[int] = None
+
+
 class FilingSummary(BaseModel):
-    """A filing the service can answer questions about."""
+    """A filing and the state of each of its indices."""
 
     doc_name: str
-    indexed: bool
     page_count: Optional[int] = None
-    status: JobStatus
+    status: IndexState = Field(
+        description="Worst-first roll-up of the individual index states.",
+    )
+    bm25: IndexInfo
+    vector: IndexInfo
+
+    @property
+    def searchable(self) -> bool:
+        """Both indices must be usable before a question can be answered."""
+        return self.bm25.state == IndexState.READY and self.vector.state == IndexState.READY
 
 
 class FilingListResponse(BaseModel):
@@ -80,6 +123,23 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
 
 
+class RetrievedPage(BaseModel):
+    """
+    One page the retriever considered, and how it scored.
+
+    Exposed so the UI can show *why* a page was cited rather than asking the
+    analyst to trust the ranking. `ScoredPage` already carries all of this.
+    """
+
+    page: int
+    display_page: int
+    rank: int
+    fused_score: float
+    bm25_score: Optional[float] = None
+    vector_score: Optional[float] = None
+    cited: bool = False
+
+
 class ChatResponse(BaseModel):
     """
     An answer with its evidence, or a decline.
@@ -94,7 +154,11 @@ class ChatResponse(BaseModel):
     found: bool
     answer: str
     evidence: Optional[Evidence] = None
-    retrieved_pages: List[int] = Field(default_factory=list)
+    retrieval: List[RetrievedPage] = Field(
+        default_factory=list,
+        description="Pages considered, best first. Present on declines too, so a "
+        "decline can show where the system looked.",
+    )
     abstention_reason: Optional[str] = None
 
     @classmethod
@@ -113,8 +177,24 @@ class ChatResponse(BaseModel):
             found=answer.found,
             answer=answer.answer,
             evidence=evidence,
-            retrieved_pages=[hit.page.citation_page for hit in answer.retrieval.hits]
-            if answer.retrieval is not None
-            else [],
+            retrieval=_retrieval_from(answer),
             abstention_reason=answer.abstention_reason,
         )
+
+
+def _retrieval_from(answer: QAAnswer) -> List[RetrievedPage]:
+    if answer.retrieval is None:
+        return []
+    hits: List["ScoredPage"] = answer.retrieval.hits
+    return [
+        RetrievedPage(
+            page=hit.page.citation_page,
+            display_page=hit.page.citation_page + 1,
+            rank=hit.rank,
+            fused_score=round(hit.score, 4),
+            bm25_score=round(hit.bm25_score, 4) if hit.bm25_score is not None else None,
+            vector_score=round(hit.vector_score, 4) if hit.vector_score is not None else None,
+            cited=answer.found and hit.page.citation_page == answer.page,
+        )
+        for hit in hits
+    ]

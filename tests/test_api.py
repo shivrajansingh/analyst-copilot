@@ -5,6 +5,7 @@ in milliseconds: what is under test is the API's behaviour, not the retriever's.
 """
 
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,11 +21,50 @@ from analyst_copilot.api.filings import FilingService
 from analyst_copilot.api.jobs import IndexingJobManager, JobStatus
 from analyst_copilot.api.main import create_app
 from analyst_copilot.parsing.models import Page
-from analyst_copilot.retrieval.models import ScoredPage, SearchResult
+from analyst_copilot.retrieval.models import (
+    BM25IndexMetadata,
+    ScoredPage,
+    SearchResult,
+    VectorIndexMetadata,
+)
 from analyst_copilot.services.qa.models import NOT_FOUND_MESSAGE, QAAnswer
 
 API = "/api/v1"
 INDEXED = "3M_2018_10K"
+
+
+class FakeStore:
+    """
+    An index store rooted in a temp directory.
+
+    Real directories, because `list_known` discovers filings by scanning the
+    store roots — a purely in-memory fake would not exercise that path.
+    """
+
+    def __init__(self, root, metadata_factory):
+        self._root = root
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._metadata_factory = metadata_factory
+        self.add(INDEXED)
+
+    def add(self, doc_name):
+        (self._root / doc_name).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def present(self):
+        return {path.name for path in self._root.iterdir() if path.is_dir()}
+
+    def exists(self, doc_name):
+        return doc_name in self.present
+
+    def is_stale(self, doc_name):
+        return False
+
+    def load_metadata(self, doc_name):
+        return self._metadata_factory(doc_name) if doc_name in self.present else None
+
+    def index_dir(self, doc_name):
+        return self._root / doc_name
 
 
 class FakeIndexer:
@@ -33,6 +73,7 @@ class FakeIndexer:
     def __init__(self):
         self.indexed = {INDEXED}
         self.saved = []
+        self.stores = []
 
     def indices_exist(self, doc_name):
         return doc_name in self.indexed
@@ -46,10 +87,30 @@ class FakeIndexer:
     def save_indices(self, indices):
         self.saved.append(indices.doc_name)
         self.indexed.add(indices.doc_name)
+        for store in self.stores:
+            store.add(indices.doc_name)
 
     def load_indices(self, doc_name):
         pages = [Page(doc_name=doc_name, page_index=i, text="x") for i in range(3)]
         return type("Idx", (), {"bm25_index": type("B", (), {"pages": pages})()})()
+
+
+def _bm25_metadata(doc_name):
+    return BM25IndexMetadata(
+        doc_name=doc_name, source_path="", page_count=3, parser_version="3"
+    )
+
+
+def _vector_metadata(doc_name):
+    return VectorIndexMetadata(
+        doc_name=doc_name,
+        source_path="",
+        page_count=3,
+        embedding_model="test-embed",
+        dimensions=8,
+        max_chars_per_page=2500,
+        parser_version="3",
+    )
 
 
 class FakeQA:
@@ -88,6 +149,9 @@ def client(tmp_path, monkeypatch):
         ApiSettings, "upload_dir", property(lambda self: tmp_path), raising=False
     )
     jobs = IndexingJobManager(indexer=indexer, max_workers=1, budget_seconds=600)
+    bm25_store = FakeStore(tmp_path / "bm25", _bm25_metadata)
+    vector_store = FakeStore(tmp_path / "vector", _vector_metadata)
+    indexer.stores = [bm25_store, vector_store]
 
     app = create_app(settings)
     app.dependency_overrides[get_api_settings] = lambda: settings
@@ -95,12 +159,17 @@ def client(tmp_path, monkeypatch):
     app.dependency_overrides[get_job_manager] = lambda: jobs
     app.dependency_overrides[get_qa_service] = FakeQA
     app.dependency_overrides[get_filing_service] = lambda: FilingService(
-        settings=settings, indexer=indexer, jobs=jobs
+        settings=settings,
+        indexer=indexer,
+        jobs=jobs,
+        bm25_store=bm25_store,
+        vector_store=vector_store,
     )
 
     with TestClient(app) as test_client:
         test_client.indexer = indexer
         test_client.jobs = jobs
+        test_client.stores = (bm25_store, vector_store)
         yield test_client
     jobs.shutdown(wait=True)
 
@@ -193,9 +262,24 @@ def test_unknown_job_id_is_404(client):
     assert client.get(f"{API}/jobs/deadbeef").status_code == 404
 
 
-def test_listing_shows_queryable_filings(client):
+def test_listing_reports_each_index_separately(client):
     body = client.get(f"{API}/filings").json()
-    assert isinstance(body["filings"], list)
+    row = next(f for f in body["filings"] if f["doc_name"] == INDEXED)
+    assert row["bm25"]["state"] == "ready"
+    assert row["vector"]["state"] == "ready"
+    assert row["vector"]["model"] == "test-embed"
+    assert row["vector"]["dimensions"] == 8
+    assert row["page_count"] == 3
+
+
+def test_an_index_present_for_only_one_retriever_is_reported_as_such(client):
+    """BM25 succeeded, embedding did not: the two badges must disagree."""
+    bm25_store, vector_store = client.stores
+    bm25_store.add("HALF_DONE")
+    body = client.get(f"{API}/filings").json()
+    row = next(f for f in body["filings"] if f["doc_name"] == "HALF_DONE")
+    assert row["bm25"]["state"] == "ready"
+    assert row["vector"]["state"] == "missing"
 
 
 # --- chat ------------------------------------------------------------------ #
@@ -210,7 +294,9 @@ def test_chat_returns_the_answer_with_its_evidence(client):
     assert body["evidence"]["page"] == 59
     assert body["evidence"]["display_page"] == 60
     assert body["evidence"]["doc_name"] == INDEXED
-    assert body["retrieved_pages"] == [59]
+    assert [hit["page"] for hit in body["retrieval"]] == [59]
+    assert body["retrieval"][0]["cited"] is True
+    assert body["retrieval"][0]["rank"] == 1
 
 
 def test_chat_declines_with_200_not_an_error(client):

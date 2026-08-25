@@ -61,6 +61,26 @@ class BM25IndexStore:
 
         return index
 
+    def load_metadata(self, doc_name: str) -> Optional[BM25IndexMetadata]:
+        """
+        Read an index's metadata without deserialising the index itself.
+
+        A library view needs page counts and versions for every filing at once;
+        `load` would unpickle each whole index to get them.
+        """
+        payload = self._read_metadata(doc_name)
+        if payload is None:
+            return None
+        try:
+            return self._metadata_from_dict(payload)
+        except KeyError:
+            return None
+
+    def is_stale(self, doc_name: str) -> bool:
+        """Index files are present but were built by a different parser version."""
+        payload = self._read_metadata(doc_name)
+        return payload is not None and payload.get("parser_version") != PARSER_VERSION
+
     def exists(self, doc_name: str) -> bool:
         """
         True only when a usable index is on disk.
@@ -68,15 +88,21 @@ class BM25IndexStore:
         An index built by an older parser is reported as absent, so callers
         rebuild instead of searching stale page boundaries.
         """
+        payload = self._read_metadata(doc_name)
+        if payload is None:
+            return False
+        return payload.get("parser_version") == PARSER_VERSION
+
+    def _read_metadata(self, doc_name: str) -> Optional[Dict[str, Any]]:
+        """Parsed metadata when every index file is present, else None."""
         target_dir = self.index_dir(doc_name)
         metadata_path = target_dir / _METADATA_FILE
         if not metadata_path.exists() or not (target_dir / _INDEX_FILE).exists():
-            return False
+            return None
         try:
-            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            return json.loads(metadata_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return False
-        return payload.get("parser_version") == PARSER_VERSION
+            return None
 
     @staticmethod
     def _metadata_to_dict(metadata: BM25IndexMetadata) -> Dict[str, Any]:
