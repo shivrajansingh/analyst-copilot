@@ -18,3 +18,4 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Evaluation](10-evaluation.md) | Answer runners + rubric scorer (+1 / 0 / −1) |
 | [HTTP API](11-api.md) | FastAPI service: add filing, status, chat |
 | [Multi-agent retrieval](12-multi-agent-retrieval.md) | Assessment and recommendation (not implemented) |
+| [Docker](15-docker.md) | **Running the stack**: api + ui containers, compose, nginx |

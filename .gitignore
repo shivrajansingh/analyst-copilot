@@ -1,6 +1,9 @@
 # Environment and secrets
 .env
 .env.*
+# ...except the template, which carries no secrets and is what the README and
+# the Docker setup tell you to copy.
+!.env.example
 
 # Python
 __pycache__/

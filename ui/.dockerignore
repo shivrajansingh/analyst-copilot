@@ -1,0 +1,9 @@
+# Only consulted when ui/ is the build context. The stack builds from the repo
+# root (so the Dockerfile can also copy docker/nginx.conf), where the root
+# .dockerignore applies — this file keeps `docker build ui/` honest too.
+node_modules/
+dist/
+.env
+.env.*
+*.log
+.DS_Store

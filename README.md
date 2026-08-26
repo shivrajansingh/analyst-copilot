@@ -57,7 +57,23 @@ large-documents-llm-system/
 └── tests/
 ```
 
-## Setup
+## Run it with Docker
+
+Two containers — the API and an nginx-served UI — and one compose file.
+
+```bash
+cp .env.example .env          # then fill in the provider keys
+docker compose -f docker-compose.yml up --build
+```
+
+The app is on <http://localhost:3000>; the API is also published on
+<http://127.0.0.1:8000> for `curl` and `/docs`. `docker compose up` without
+`-f` instead brings up hot-reloading dev servers (uvicorn `--reload` and Vite
+with HMR on 5173). `filings/` and `storage/` are bind-mounted, so uploads and
+indices live on the host and survive the containers. Details:
+[docs/15-docker.md](docs/15-docker.md).
+
+## Setup (without Docker)
 
 ```bash
 python -m venv .venv

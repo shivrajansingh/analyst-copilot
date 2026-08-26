@@ -1,0 +1,49 @@
+# Development overrides, applied automatically by `docker compose up`.
+#
+# Both services become the same dev servers you would run by hand — uvicorn
+# --reload and the Vite dev server with HMR — against bind-mounted source, so
+# an edit on the host is live in the container without a rebuild.
+#
+# To run the built production images instead, name the base file explicitly:
+#
+#     docker compose -f docker-compose.yml up --build
+
+services:
+  api:
+    build:
+      target: runtime
+    volumes:
+      - ./filings:/app/filings
+      - ./storage:/app/storage
+      # Source over the copy baked into the image. `--reload` watches these.
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+    command: >
+      uvicorn analyst_copilot.api.main:app
+      --host 0.0.0.0 --port 8000
+      --reload --reload-dir /app/src
+    ports:
+      - "8000:8000"
+
+  ui:
+    # The production image is nginx serving a build; for development it has to
+    # be node, so the image is replaced rather than overridden.
+    image: node:22-alpine
+    working_dir: /app
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      # ui/vite.config.ts reads this for its /api proxy target. Inside the
+      # compose network the API is `api`, not localhost.
+      VITE_API_TARGET: http://api:8000
+    volumes:
+      - ./ui:/app
+      # An anonymous volume so the container's node_modules — built for Linux —
+      # is not shadowed by the host's, which on macOS holds darwin binaries.
+      - /app/node_modules
+    # `npm ci` on every start is a few seconds and keeps the container's
+    # dependencies honest against the lockfile.
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"

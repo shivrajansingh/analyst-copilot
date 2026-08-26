@@ -1,0 +1,64 @@
+# The production stack: two services, one network.
+#
+#   browser ──:3000──▶ ui (nginx) ──/api/*──▶ api (uvicorn) ──▶ storage/ filings/
+#
+# `docker compose up` also loads docker-compose.override.yml, which turns both
+# services into hot-reloading development servers. For the built, production
+# images run:
+#
+#     docker compose -f docker-compose.yml up --build
+#
+# Postgres is not here. The plan (ui/PLAN.md §9) has `db` and `migrate`
+# services, and they are deliberately left out until something needs them:
+# auth and chat history are still localStorage, and a database that nothing
+# reads would be a service to keep alive for no benefit.
+
+name: analyst-copilot
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    # Provider URLs, keys and models. Copy .env.example to .env first.
+    env_file:
+      - .env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      # nginx is same-origin in this stack, so the browser never makes a
+      # cross-origin request and the wildcard default is unnecessary.
+      API_CORS_ORIGINS: '[]'
+    volumes:
+      # Both are bind mounts on purpose. `filings/` holds the documents an
+      # analyst uploaded, `storage/` holds hours of embedding, and both should
+      # survive `docker compose down -v` and be readable without a container.
+      - ./filings:/app/filings
+      - ./storage:/app/storage
+    # Uncomment on Linux if the container cannot write to the bind mounts:
+    # the image runs as uid 10001, and a bind mount keeps the host's ownership.
+    #   user: "${UID:-1000}:${GID:-1000}"
+    extra_hosts:
+      # Lets the container reach a provider running on the host — Ollama at
+      # http://host.docker.internal:11434/v1, say. Harmless when both providers
+      # are remote, which is the default configuration.
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Exposed for curl and /docs. The UI does not use it; it goes over the
+      # compose network. Drop this line to keep the API off the host entirely.
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/ui.Dockerfile
+    depends_on:
+      api:
+        # Wait for /api/v1/health, not just for the process. nginx resolves
+        # `api` once at startup, so starting before the API has a name to
+        # resolve gives a 502 that only a restart clears.
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    restart: unless-stopped

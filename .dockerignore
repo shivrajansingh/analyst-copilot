@@ -1,0 +1,51 @@
+# The build context is sent to the daemon in full before anything runs, so
+# what is excluded here is mostly what makes the build fast. The four biggest
+# directories in this repo are all things an image must never contain:
+#
+#   filings/       344 MB  the corpus — mounted at runtime, not baked in
+#   .venv/         266 MB  a macOS virtualenv, useless in a Linux image
+#   ui/node_modules 168 MB reinstalled inside the build stage
+#   .git/           40 MB  history
+
+.git
+.gitignore
+.dockerignore
+
+# Secrets. Provider keys reach the container through env_file at run time;
+# copying .env into an image would bake them into a layer anyone can read.
+.env
+.env.*
+!.env.example
+
+# Corpus and generated data — both are volumes.
+filings/
+storage/
+review/
+data/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+
+# The UI build stage installs and builds these itself.
+ui/node_modules/
+ui/dist/
+
+# Tests and docs do not belong in a runtime image.
+tests/
+docs/
+*.md
+!README.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.claude/
