@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { FileStack, LogOut, MessageSquarePlus, Settings, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -9,10 +10,18 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
   const signOut = useAuthStore((state) => state.signOut)
+  const load = useConversationStore((state) => state.load)
+  const loaded = useConversationStore((state) => state.loaded)
   const conversations = useConversationStore((state) =>
     state.order.map((id) => state.conversations[id]).filter(Boolean),
   )
   const remove = useConversationStore((state) => state.remove)
+
+  // History lives in Postgres now: fetch it on arrival, and again when the
+  // signed-in user changes, so one user's threads never leak into another's.
+  useEffect(() => {
+    load()
+  }, [load, user?.id])
 
   // Group by day so a long history stays scannable.
   const groups = conversations.reduce<Record<string, typeof conversations>>((acc, conversation) => {
@@ -49,7 +58,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="scrollbar-slim mt-4 flex-1 overflow-y-auto px-2">
-        {conversations.length === 0 && (
+        {!loaded && (
+          <p className="px-3 py-6 text-xs leading-relaxed text-ink-subtle">
+            Loading conversations…
+          </p>
+        )}
+        {loaded && conversations.length === 0 && (
           <p className="px-3 py-6 text-xs leading-relaxed text-ink-subtle">
             Your conversations appear here. Each one is scoped to a single filing.
           </p>
@@ -82,7 +96,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   </NavLink>
                   <button
                     onClick={() => {
-                      remove(conversation.id)
+                      void remove(conversation.id)
                       navigate('/chat')
                     }}
                     aria-label={`Delete ${conversation.title}`}

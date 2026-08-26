@@ -272,6 +272,14 @@ class ChatRequest(BaseModel):
     collection: Optional[str] = Field(
         default=None, min_length=1, description="Folder to answer from."
     )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Thread to record this exchange in. When provided, the question and "
+            "the answer are persisted and the response carries their message ids."
+        ),
+    )
 
     @model_validator(mode="after")
     def _exactly_one_scope(self) -> "ChatRequest":
@@ -333,6 +341,20 @@ class ChatResponse(BaseModel):
     )
     abstention_reason: Optional[str] = None
 
+    # Threading. Present only when the exchange was persisted to Postgres.
+    conversation_id: Optional[str] = Field(
+        default=None, description="The thread this exchange was recorded in."
+    )
+    user_message_id: Optional[str] = Field(
+        default=None, description="The stored row for the question."
+    )
+    message_id: Optional[str] = Field(
+        default=None, description="The stored row for this answer."
+    )
+    latency_ms: Optional[int] = Field(
+        default=None, description="Wall time of the QA pipeline, not the HTTP call."
+    )
+
     @classmethod
     def from_answer(cls, answer: QAAnswer) -> "ChatResponse":
         evidence = None
@@ -385,3 +407,54 @@ def _retrieval_from(answer: QAAnswer) -> List[RetrievedPage]:
         )
         for hit in hits
     ]
+
+
+class ConversationCreateRequest(BaseModel):
+    """Start a thread. A thread is pinned to the filing it was started in."""
+
+    collection: Optional[str] = Field(
+        default=None, min_length=1, max_length=120, description="Filing the thread is pinned to."
+    )
+    title: Optional[str] = Field(
+        default=None, max_length=200, description="Defaults to 'New conversation'."
+    )
+
+
+class ConversationRenameRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
+class MessageResponse(BaseModel):
+    """One stored exchange row, shaped for the UI's history rendering."""
+
+    id: str
+    role: str  # user | assistant
+    content: str
+    created_at: str = Field(description="ISO-8601, UTC.")
+    found: Optional[bool] = None
+    page: Optional[int] = None
+    abstention_reason: Optional[str] = None
+    latency_ms: Optional[int] = None
+    retrieval: Optional[List[RetrievedPage]] = None
+    result: Optional[dict] = Field(
+        default=None,
+        description="The full ChatResponse as served, so history re-renders verbatim.",
+    )
+
+
+class ConversationSummary(BaseModel):
+    """A thread as it appears in the sidebar: no message bodies."""
+
+    id: str
+    collection: Optional[str] = None
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class ConversationDetail(ConversationSummary):
+    messages: List[MessageResponse] = Field(default_factory=list)
+
+
+class ConversationListResponse(BaseModel):
+    conversations: List[ConversationSummary] = Field(default_factory=list)

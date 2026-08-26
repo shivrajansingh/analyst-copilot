@@ -1,21 +1,55 @@
-# The production stack: two services, one network.
+# The production stack: three services and one one-shot migration, one network.
 #
 #   browser ──:3000──▶ ui (nginx) ──/api/*──▶ api (uvicorn) ──▶ storage/ filings/
+#                                                  │
+#                                                  ▼
+#                              migrate (alembic) ◀── db (postgres) ──▶ pgdata
 #
 # `docker compose up` also loads docker-compose.override.yml, which turns both
-# services into hot-reloading development servers. For the built, production
+# app services into hot-reloading development servers. For the built, production
 # images run:
 #
 #     docker compose -f docker-compose.yml up --build
 #
-# Postgres is not here. The plan (ui/PLAN.md §9) has `db` and `migrate`
-# services, and they are deliberately left out until something needs them:
-# auth and chat history are still localStorage, and a database that nothing
-# reads would be a service to keep alive for no benefit.
+# The database holds product state — chat history today, auth tomorrow. The
+# index artefacts stay on disk under `storage/`; Postgres never sees a vector.
+# `migrate` runs Alembic's `upgrade head` once against a healthy `db`, and the
+# API waits for it, so a fresh checkout boots with a migrated schema.
 
 name: analyst-copilot
 
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      # Local-development credentials, overridable from the shell. Not
+      # secrets: the database is not published beyond the compose network.
+      POSTGRES_USER: ${POSTGRES_USER:-analyst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-analyst}
+      POSTGRES_DB: ${POSTGRES_DB:-analyst}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyst} -d ${POSTGRES_DB:-analyst}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-analyst}:${POSTGRES_PASSWORD:-analyst}@db:5432/${POSTGRES_DB:-analyst}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build:
       context: .
@@ -29,6 +63,13 @@ services:
       # nginx is same-origin in this stack, so the browser never makes a
       # cross-origin request and the wildcard default is unnecessary.
       API_CORS_ORIGINS: '[]'
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-analyst}:${POSTGRES_PASSWORD:-analyst}@db:5432/${POSTGRES_DB:-analyst}
+    depends_on:
+      # The schema must exist before the API serves: conversations queries
+      # would otherwise fail on a fresh volume. Wait for the migration, not
+      # just for the database.
+      migrate:
+        condition: service_completed_successfully
     volumes:
       # Both are bind mounts on purpose. `filings/` holds the documents an
       # analyst uploaded, `storage/` holds hours of embedding, and both should
@@ -62,3 +103,6 @@ services:
     ports:
       - "3000:80"
     restart: unless-stopped
+
+volumes:
+  pgdata:

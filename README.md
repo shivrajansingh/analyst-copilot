@@ -156,12 +156,23 @@ python scripts/serve_api.py          # http://127.0.0.1:8000, interactive docs a
 | `GET` | `/api/v1/filings/{doc_name}/status` | `queued → parsing → embedding → saving → ready` / `failed` |
 | `GET` | `/api/v1/filings` | Filings the service can answer from |
 | `POST` | `/api/v1/chat` | Ask one question of one **filing** (or one document) |
+| `GET` | `/api/v1/conversations` | The caller's chat threads, newest first |
+| `POST` | `/api/v1/conversations` | Start a thread (pinned to one filing) |
+| `GET` | `/api/v1/conversations/{id}` | A thread with all its messages |
+| `PATCH` | `/api/v1/conversations/{id}` | Rename a thread |
+| `DELETE` | `/api/v1/conversations/{id}` | Delete a thread and its messages |
 | `GET` | `/api/v1/health` | Models in use, filings indexed |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/chat -H 'Content-Type: application/json' \
   -d '{"collection": "3M multi-year", "question": "What is the FY2018 capital expenditure?"}'
 ```
+
+Chat history lives in **Postgres** (the `db` service in the compose stack), not
+the browser. `POST /chat` accepts a `conversation_id` and records the question
+and the verified answer — or the decline — in the thread; the response then
+carries `message_id`, `user_message_id` and `latency_ms`. Without a database
+configured, questions are still answered, just not recorded.
 
 ## Filings
 

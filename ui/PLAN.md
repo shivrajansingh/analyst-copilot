@@ -3,8 +3,9 @@
 **Status:** the React app is built and running against the live API. A **filing**
 is a named set of documents: create one, add documents of any supported format by
 upload or by URL, and ask questions of the whole filing. The per-document library
-screen is gone (§4.4). What is missing is the persistence and deployment layer —
-Postgres, real auth, Docker Compose.
+screen is gone (§4.4). Chat history is in Postgres; what remains of the
+persistence and deployment layer is real auth — the stack (`db`, `migrate`, `api`,
+`ui`) is built and running.
 **Scope:** a React application in `ui/`, a Postgres-backed API, and a Docker Compose
 stack that runs the whole product.
 
@@ -50,17 +51,17 @@ Ordered by what blocks what.
 | ~~R0a~~ | ~~Multi-format upload~~ — **done**. `AddDocumentsDropzone` accepts PDF / HTML / Word / Excel / CSV / Markdown, many at once, with magic-byte sniffing before a 64 MB file crosses the wire; `FetchByUrl` adds one by URL | — |
 | ~~R0c~~ | ~~Non-page citations~~ — **done**. Every surface reads `evidence.label` / `hit.label`; nothing formats `page N` locally | — |
 | ~~R0d~~ | ~~Adjusted-location disclosure~~ — **done**. `LocationNote` states it when the citation moved, as a note rather than a warning | — |
-| **R0b** | **Per-document parsing progress**: the filing card shows one `JobProgress` per document, but the parsing phase has no counter — `GET /collections/{name}/jobs` would need `segments_parsed` / `segments_total`. A 160-page PDF parses for ~57s against a bar that cannot move | Honest progress on large PDFs |
-| **R0e** | **Markdown page viewer**: `PageResponse.markdown` is returned and unused — the viewer still renders plain text, so a financial statement reads as a wall of prose instead of a table | Spot-checking a bad citation |
-| **R0f** | **Richer failed-document states**: a failed job shows its raw error in `DocumentRow`. Scanned PDFs (no OCR → zero characters) are the predictable support question and deserve their own message | Error handling on the upload path |
-| **R1** | **Docker Compose**: `db`, `migrate`, `api`, `ui` (nginx). Mount `filings/` and `storage/` per §12 Q3 | Everything below; also the live session |
-| **R2** | **Postgres + SQLAlchemy 2.0 + Alembic**, schema per §8 | R3–R6 |
+| ~~R0b~~ | ~~Per-document parsing progress~~ | — |
+| ~~R0e~~ | ~~Markdown page viewer~~ | — |
+| ~~R0f~~ | ~~Richer failed-document states~~ | — |
+| ~~R1~~ | ~~Docker Compose: `db`, `migrate`, `api`, `ui` (nginx)~~ — **done**. `postgres:16-alpine` + a one-shot `alembic upgrade head` that the API waits for; `filings/` and `storage/` bind-mounted per §12 Q3 | — |
+| ~~R2~~ | ~~Postgres + SQLAlchemy 2.0 + Alembic~~ — **done**. Schema per §8 (minus `doc_name`, renamed `collection` to match the filing model); demo users seeded by the initial migration | R3, R5, R6 |
 | **R3** | **Real auth**: `/auth/login`, `/auth/me`, `/auth/logout`; bcrypt, JWT, seeded demo user. Multi-user per §12 Q1 | Replaces the localStorage session |
-| **R4** | **Conversations**: the five endpoints in §7.2, scoped per user | Replaces localStorage history |
+| ~~R4~~ | ~~Conversations: the five endpoints in §7.2, scoped per user~~ — **done**. `POST /chat` records the exchange when given a `conversation_id` and returns `message_id` / `user_message_id` / `latency_ms`; the UI's `conversations.store.ts` is now API-backed, history survives restarts and is per-user | — |
 | **R5** | **Provider settings**: GET/PUT/test, global scope per §12 Q2, keys encrypted at rest and masked in responses | Makes `/settings` writable |
 | **R6** | **Job persistence**: move `IndexingJobManager` state into Postgres; `GET /jobs` feed | Job history surviving restart |
 | **R7** | **Reindex**: `POST /filings/{doc}/reindex`, `reindex-all`, `DELETE /filings/{doc}` | The bulk-rebuild path after an embedding-model change |
-| **R8** | **Chat threading fields**: `conversation_id` in, `message_id` / `latency_ms` out | R4 |
+| ~~R8~~ | ~~Chat threading fields~~ — **done** alongside R4 | — |
 | **R9** | **Frontend tests**: Vitest + Testing Library + MSW against the real contract | — |
 | **R10** | **Polish**: full keyboard path, a11y audit, error/empty states on the remaining screens | — |
 
@@ -69,10 +70,11 @@ config, do not expose the weights).
 
 ### The gap that matters
 
-Auth and chat history are **localStorage-backed behind adapters shaped like the planned
-API rows**. They work, and swapping each is one file — `auth.store.ts` and
-`conversations.store.ts`. But until R2–R4 land, a session does not survive a different
-browser and history is not shared between users. The UI is finished; the product is not.
+Auth is still a **localStorage-backed adapter** (`auth.store.ts`). Chat history
+is not: it now lives in Postgres behind the `/conversations` endpoints, so it
+survives a restart, a different browser, and is private per user (R4 landed;
+R3 is the remaining swap). The UI is finished; the product is one auth
+endpoint from complete.
 
 ---
 
@@ -697,11 +699,11 @@ every search slower.
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| **0** | Compose stack + Postgres + Alembic + auth | ⬜ **Not started** — R1–R3 |
+| **0** | Compose stack + Postgres + Alembic + auth | 🟨 **Partial** — stack, Postgres and Alembic done (R1–R2); real auth outstanding (R3) |
 | **1** | Filing library, multi-file add, fetch-by-URL, per-document job status | ✅ **Done** — create a filing, add documents by drop or URL, watch each index |
 | **2** | Chat + answer card + evidence panel | ✅ **Done** — filing-scoped questions, source-named citations, adjusted-location disclosure |
-| **2b** | Markdown page viewer + richer document error states | ⬜ **Not started** — R0e, R0f |
-| **3** | Conversations, history sidebar, decline card | 🟨 **Partial** — all of it works, on localStorage rather than Postgres (R4) |
+| **2b** | Markdown page viewer + richer document error states | ✅ **Done** |
+| **3** | Conversations, history sidebar, decline card | ✅ **Done** — in Postgres (R4), surviving restarts, private per user |
 | **4** | Settings: providers, connection test, reindex warning | 🟨 **Partial** — reads live config and warns; not writable (R5, R7) |
 | **5** | Polish: dark mode, empty/error/loading states, keyboard paths, a11y pass | 🟨 **Partial** — themes, empty/loading/error states done; a11y audit outstanding (R10) |
 
@@ -712,12 +714,10 @@ asks the filing. Verified end to end against a live API on a filing holding two
 question cited `3M_2022_10K` page 33, with pages from both filings in each retrieved
 set, and a CSV question cited `table 'segments'` rather than inventing a page.
 
-What remains is persistence and deployment, which is Phase 0 arriving late: the UI
-was built first because it could be, against an API that already worked.
-
-That ordering was a deliberate trade. It got the graded surfaces demonstrable early, at
-the cost of two adapters (`auth.store.ts`, `conversations.store.ts`) that will be thrown
-away when R3 and R4 land.
+What remains is real auth and the two writable settings surfaces. The UI was
+built first because it could be, against an API that already worked, and the
+conversations adapter that used to hold history in localStorage has been
+replaced by the `/conversations` API; `auth.store.ts` is the one adapter left.
 
 ---
 

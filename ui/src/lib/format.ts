@@ -37,6 +37,12 @@ export function dateBucket(iso: string): string {
   return format(date, 'MMMM yyyy')
 }
 
+/** A thread's title, taken from its first question. */
+export function truncateTitle(text: string): string {
+  const clean = text.trim().replace(/\s+/g, ' ')
+  return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean
+}
+
 /** `3M_2018_10K` → `3M · 2018 · 10-K`, for headings where the stem is noise. */
 export function prettyDocName(docName: string): string {
   return docName.replace(/_/g, ' · ').replace(/10K/g, '10-K').replace(/10Q/g, '10-Q')

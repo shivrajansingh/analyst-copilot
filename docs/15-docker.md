@@ -1,12 +1,14 @@
 # Running the stack in Docker
 
-Two services, one network, no database.
+Four containers: the app pair plus Postgres and a one-shot migration.
 
 ```text
    browser ──:3000──▶  ui (nginx)  ──/api/*──▶  api (uvicorn)
                                                     │
                                           ./filings    ./storage
                                         (bind mounts on the host)
+                                                    │
+                              migrate (alembic) ◀── db (postgres) ──▶ pgdata
 ```
 
 ```bash
@@ -20,13 +22,27 @@ the API over the compose network instead.
 
 ---
 
-## Why there is no `db` service
+## The database
 
-`ui/PLAN.md` §9 plans `db` and `migrate` services for Postgres. They are
-deliberately absent. Auth and chat history are still localStorage behind
-adapters (R2–R4), so a Postgres container would be a service to keep alive,
-back up and wait for at startup, in exchange for nothing any code reads. It
-arrives with the code that needs it.
+`db` is `postgres:16-alpine` with a `pgdata` volume, reachable only inside the
+compose network. It holds **product state** — chat history today, auth
+tomorrow — never index artefacts: the BM25 pickles and vector `.npz` files stay
+under `storage/` on a bind mount, because Postgres storing hundreds of
+megabytes of float arrays would slow every search and buy nothing.
+
+`migrate` runs Alembic's `upgrade head` against a healthy `db` and exits; the
+API starts only after it completes (`service_completed_successfully`), so a
+fresh clone boots with a migrated schema. Add a migration by editing the models
+in `src/analyst_copilot/api/db/` and generating one:
+
+```bash
+DATABASE_URL=postgresql+psycopg://analyst:analyst@localhost:5432/analyst \
+  alembic revision --autogenerate -m "describe the change"
+```
+
+Outside the compose stack the database is optional: with `DATABASE_URL` unset
+the API answers questions normally but records no history, and
+`/conversations` responds 503 `database_unavailable`.
 
 ---
 
@@ -173,4 +189,8 @@ Against the built images, on this stack:
 /api/v1/collections -> both filings visible from the mounted storage/
 chat through nginx  -> cited BOEING_2022_10K page_index 112 (gold: 112)
 3 MB upload         -> 202, rejected in the body by type — not a 413 at the proxy
+migrate             -> alembic upgrade head -> 0001_initial, exits 0
+conversations       -> create + chat with conversation_id persisted; history
+                       survives `docker compose restart api`; rendered by the
+                       UI after a full page reload
 ```

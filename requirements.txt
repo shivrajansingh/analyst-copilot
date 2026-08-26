@@ -12,6 +12,11 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
 
+# Chat history persistence (Postgres)
+sqlalchemy>=2.0.30
+psycopg[binary]>=3.1.18
+alembic>=1.13.0
+
 # Document parsing (one parser per format, all normalized to Markdown)
 pypdf>=5.0.0
 pdfplumber>=0.11.0

@@ -60,6 +60,20 @@ class UpstreamUnavailable(ApiError):
     code = "upstream_unavailable"
 
 
+class ConversationNotFound(ApiError):
+    """No conversation with that id, or it belongs to another user."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    code = "conversation_not_found"
+
+
+class DatabaseUnavailable(ApiError):
+    """Postgres is not configured or not reachable, so nothing can be persisted."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "database_unavailable"
+
+
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,

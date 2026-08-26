@@ -46,6 +46,8 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 COPY pyproject.toml README.md ./
 
 # Non-root. The two writable paths are created here and owned by the app user

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from analyst_copilot.api.fetching import DEFAULT_USER_AGENT
@@ -32,6 +32,8 @@ class ApiSettings(BaseSettings):
         env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Aliased fields (DATABASE_URL) stay settable by keyword in tests.
+        populate_by_name=True,
     )
 
     title: str = "Analyst Copilot API"
@@ -75,6 +77,15 @@ class ApiSettings(BaseSettings):
     # The challenge requires one filing to finish indexing within 10 minutes.
     # Exposed on the status payload so a UI can show progress against it.
     index_budget_seconds: int = 600
+
+    # Postgres connection for product state (chat history today). Read from
+    # DATABASE_URL — the convention Docker and every PAAS speaks — with the
+    # API_-prefixed form as the fallback. When unset the API answers questions
+    # normally but records nothing: the conversations endpoints return 503.
+    database_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_URL", "API_DATABASE_URL"),
+    )
 
     @property
     def upload_dir(self) -> Path:

@@ -161,6 +161,42 @@ export interface ChatResponse {
   evidence: Evidence | null
   retrieval: RetrievedPage[]
   abstention_reason: string | null
+  /** Present when the exchange was recorded in Postgres. */
+  conversation_id: string | null
+  user_message_id: string | null
+  message_id: string | null
+  latency_ms: number | null
+}
+
+export interface ConversationSummary {
+  id: string
+  /** The filing this thread is pinned to. */
+  collection: string | null
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MessageResponse {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+  found: boolean | null
+  page: number | null
+  abstention_reason: string | null
+  latency_ms: number | null
+  retrieval: RetrievedPage[] | null
+  /** The full ChatResponse as served, so history re-renders verbatim. */
+  result: ChatResponse | null
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: MessageResponse[]
+}
+
+export interface ConversationListResponse {
+  conversations: ConversationSummary[]
 }
 
 export interface HealthResponse {

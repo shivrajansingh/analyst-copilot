@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
+import logging
+import time
+
 from fastapi import APIRouter, Depends
 from starlette.concurrency import run_in_threadpool
 
 from analyst_copilot.api.dependencies import (
+    current_user_id,
     get_collection_indexer,
+    get_conversation_service,
     get_filing_service,
     get_qa_service,
 )
-from analyst_copilot.api.errors import FilingNotIndexed, UpstreamUnavailable
+from analyst_copilot.api.errors import (
+    DatabaseUnavailable,
+    FilingNotIndexed,
+    UpstreamUnavailable,
+)
 from analyst_copilot.api.filings import FilingService
 from analyst_copilot.api.schemas import ChatRequest, ChatResponse
+from analyst_copilot.api.services.conversations import ConversationService
 from analyst_copilot.collections.indexer import CollectionIndexer
+from analyst_copilot.config.settings import get_settings
 from analyst_copilot.services.qa import QuestionAnsweringService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
@@ -25,6 +38,8 @@ async def chat(
     filings: FilingService = Depends(get_filing_service),
     collections: CollectionIndexer = Depends(get_collection_indexer),
     qa: QuestionAnsweringService = Depends(get_qa_service),
+    conversations: ConversationService = Depends(get_conversation_service),
+    user_id: str = Depends(current_user_id),
 ) -> ChatResponse:
     """
     Answer a question from one folder or one document, with the place it came from.
@@ -60,6 +75,7 @@ async def chat(
             {"question": request.question, "doc_name": request.doc_name},
         )
 
+    started = time.perf_counter()
     try:
         # The pipeline is synchronous and spends its time on network calls, so
         # it runs off the event loop to keep the service responsive.
@@ -68,4 +84,31 @@ async def chat(
     except ValueError as exc:
         raise UpstreamUnavailable(f"The language model could not be reached: {exc}") from exc
 
-    return ChatResponse.from_answer(answer)
+    latency_ms = round((time.perf_counter() - started) * 1000)
+    response = ChatResponse.from_answer(answer)
+
+    if request.conversation_id:
+        try:
+            # Persistence is best-effort from the caller's point of view: the
+            # answer is complete without it. A conversation that is not the
+            # caller's is a real error and propagates as a 404.
+            response.conversation_id = request.conversation_id
+            response.latency_ms = latency_ms
+            user_message_id, message_id = await run_in_threadpool(
+                conversations.record_exchange,
+                user_id,
+                request.conversation_id,
+                request.question,
+                response.model_dump(mode="json"),
+                latency_ms,
+                get_settings().openai_model,
+            )
+            response.user_message_id = user_message_id
+            response.message_id = message_id
+        except DatabaseUnavailable:
+            logger.warning(
+                "chat exchange not persisted for conversation %s: no database configured",
+                request.conversation_id,
+            )
+
+    return response
