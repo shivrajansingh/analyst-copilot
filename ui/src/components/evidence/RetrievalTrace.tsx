@@ -18,6 +18,9 @@ export function RetrievalTrace({
   onOpenPage?: (hit: RetrievedPage) => void
 }) {
   if (retrieval.length === 0) return null
+  // A folder ranks pages from several documents against each other, and page 59
+  // exists in all of them, so the document has to be shown alongside the page.
+  const multiDocument = new Set(retrieval.map((hit) => hit.doc_name)).size > 1
   const max = Math.max(...retrieval.map((hit) => hit.fused_score), 0.0001)
 
   return (
@@ -26,36 +29,47 @@ export function RetrievalTrace({
         Why this page
       </h3>
       <p className="mb-3 text-2xs leading-relaxed text-ink-subtle">
-        Pages the retriever considered, best first. Open one to read it and see how each
-        retriever scored it.
+        {multiDocument
+          ? 'Pages from across the folder, ranked against each other, best first. Open one to read it and see how each retriever scored it.'
+          : 'Pages the retriever considered, best first. Open one to read it and see how each retriever scored it.'}
       </p>
 
       <ul className="space-y-2">
         {retrieval.map((hit) => (
-          <li key={hit.page} className="group">
+          <li key={`${hit.doc_name}:${hit.page}`} className="group">
             <button
               type="button"
               onClick={() => onOpenPage?.(hit)}
               disabled={!onOpenPage}
-              aria-label={`Read page ${hit.display_page}`}
+              aria-label={
+                multiDocument
+                  ? `Read ${hit.doc_name} ${hit.label || `page ${hit.display_page}`}`
+                  : `Read page ${hit.display_page}`
+              }
               className={cn(
                 'flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors',
                 onOpenPage && 'hover:bg-surface-sunken',
               )}
             >
-              <span className="flex w-9 shrink-0 items-center gap-0.5">
+              <span
+                className={cn(
+                  'flex shrink-0 items-center gap-0.5',
+                  multiDocument ? 'w-40' : 'w-9',
+                )}
+              >
                 {hit.cited ? (
-                  <Star className="h-3 w-3 fill-accent text-accent" />
+                  <Star className="h-3 w-3 shrink-0 fill-accent text-accent" />
                 ) : (
-                  <span className="w-3" />
+                  <span className="w-3 shrink-0" />
                 )}
                 <span
                   className={cn(
-                    'tabular font-mono text-xs',
+                    'tabular min-w-0 truncate font-mono text-xs',
                     hit.cited ? 'font-semibold text-accent' : 'text-ink-muted',
                   )}
+                  title={multiDocument ? `${hit.doc_name} · ${hit.label}` : undefined}
                 >
-                  {hit.display_page}
+                  {multiDocument ? `${hit.doc_name} ${hit.display_page}` : hit.display_page}
                 </span>
               </span>
 

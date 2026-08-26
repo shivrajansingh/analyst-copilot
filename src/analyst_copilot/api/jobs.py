@@ -21,8 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
+from analyst_copilot.collections.indexer import CollectionIndexer
 from analyst_copilot.services.indexing import HybridFilingIndexer
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,10 @@ class IndexingJob:
     finished_at: Optional[float] = None
     page_count: Optional[int] = None
     error: Optional[str] = None
+    # The folder this document is being indexed into, or None for a document
+    # indexed on its own at the top level.
+    collection: Optional[str] = None
+    source_format: Optional[str] = None
 
     @property
     def elapsed_seconds(self) -> float:
@@ -73,7 +78,9 @@ class _Registry:
 
     lock: threading.Lock = field(default_factory=threading.Lock)
     by_id: Dict[str, IndexingJob] = field(default_factory=dict)
-    active_by_doc: Dict[str, str] = field(default_factory=dict)
+    # Keyed by (collection, doc_name): two folders may each hold a document
+    # called `10-K`, and they are not the same job.
+    active_by_doc: Dict[Tuple[Optional[str], str], str] = field(default_factory=dict)
 
 
 class IndexingJobManager:
@@ -85,8 +92,10 @@ class IndexingJobManager:
         max_workers: int = 2,
         budget_seconds: int = 600,
         clock: Callable[[], float] = time.time,
+        collection_indexer: Optional[CollectionIndexer] = None,
     ) -> None:
         self._indexer = indexer or HybridFilingIndexer()
+        self._collection_indexer = collection_indexer
         self._budget_seconds = budget_seconds
         self._clock = clock
         self._registry = _Registry()
@@ -100,10 +109,18 @@ class IndexingJobManager:
         with self._registry.lock:
             return self._registry.by_id.get(job_id)
 
-    def active_job_for(self, doc_name: str) -> Optional[IndexingJob]:
+    def active_job_for(
+        self,
+        doc_name: str,
+        collection: Optional[str] = None,
+    ) -> Optional[IndexingJob]:
         with self._registry.lock:
-            job_id = self._registry.active_by_doc.get(doc_name)
+            job_id = self._registry.active_by_doc.get((collection, doc_name))
             return self._registry.by_id.get(job_id) if job_id else None
+
+    def jobs_for_collection(self, collection: str) -> List[IndexingJob]:
+        """Every job for one folder's documents, newest first."""
+        return [job for job in self.list_jobs() if job.collection == collection]
 
     def list_jobs(self) -> List[IndexingJob]:
         with self._registry.lock:
@@ -111,15 +128,21 @@ class IndexingJobManager:
         return sorted(jobs, key=lambda job: job.created_at, reverse=True)
 
     # -- submission ------------------------------------------------------- #
-    def submit(self, doc_name: str, source_path: Path) -> IndexingJob:
+    def submit(
+        self,
+        doc_name: str,
+        source_path: Path,
+        collection: Optional[str] = None,
+        source_format: Optional[str] = None,
+    ) -> IndexingJob:
         """
-        Queue a filing for indexing.
+        Queue a document for indexing, optionally into a folder.
 
         Re-submitting a document that is already being indexed returns the job
-        in flight rather than embedding the same filing twice.
+        in flight rather than embedding the same file twice.
         """
         with self._registry.lock:
-            existing_id = self._registry.active_by_doc.get(doc_name)
+            existing_id = self._registry.active_by_doc.get((collection, doc_name))
             if existing_id:
                 return self._registry.by_id[existing_id]
 
@@ -130,9 +153,11 @@ class IndexingJobManager:
                 status=JobStatus.QUEUED,
                 created_at=self._clock(),
                 budget_seconds=self._budget_seconds,
+                collection=collection,
+                source_format=source_format,
             )
             self._registry.by_id[job.job_id] = job
-            self._registry.active_by_doc[doc_name] = job.job_id
+            self._registry.active_by_doc[(collection, doc_name)] = job.job_id
 
         self._pool.submit(self._run, job.job_id)
         return job
@@ -149,7 +174,9 @@ class IndexingJobManager:
             updated = replace(job, **changes)
             self._registry.by_id[job_id] = updated
             if updated.status.is_terminal:
-                self._registry.active_by_doc.pop(updated.doc_name, None)
+                self._registry.active_by_doc.pop(
+                    (updated.collection, updated.doc_name), None
+                )
 
     def _run(self, job_id: str) -> None:
         job = self.get(job_id)
@@ -157,21 +184,11 @@ class IndexingJobManager:
             return
 
         try:
-            self._update(job_id, status=JobStatus.PARSING, started_at=self._clock())
-            document = self._indexer.parse(job.source_path, doc_name=job.doc_name)
-
-            self._update(
-                job_id,
-                status=JobStatus.EMBEDDING,
-                page_count=document.page_count,
-            )
-            indices = self._indexer.build_indices(document)
-
-            self._update(job_id, status=JobStatus.SAVING)
-            self._indexer.save_indices(indices)
-
+            if job.collection:
+                self._run_into_collection(job)
+            else:
+                self._run_standalone(job)
             self._update(job_id, status=JobStatus.READY, finished_at=self._clock())
-            logger.info("indexed %s (%d pages)", job.doc_name, document.page_count)
         except Exception as exc:  # noqa: BLE001 - a failed job must be reportable, not fatal
             logger.exception("indexing failed for %s", job.doc_name)
             self._update(
@@ -180,3 +197,52 @@ class IndexingJobManager:
                 finished_at=self._clock(),
                 error=f"{type(exc).__name__}: {exc}",
             )
+
+    def _run_standalone(self, job: IndexingJob) -> None:
+        """Index a document at the top level, phase by reportable phase."""
+        self._update(job.job_id, status=JobStatus.PARSING, started_at=self._clock())
+        document = self._indexer.parse(job.source_path, doc_name=job.doc_name)
+
+        self._update(
+            job.job_id,
+            status=JobStatus.EMBEDDING,
+            page_count=document.page_count,
+            # Read defensively: the format is a reporting detail, and a parser
+            # that does not carry one must not fail the job over it.
+            source_format=getattr(
+                getattr(document, "source_format", None), "value", job.source_format
+            ),
+        )
+        indices = self._indexer.build_indices(document)
+
+        self._update(job.job_id, status=JobStatus.SAVING)
+        self._indexer.save_indices(indices)
+        logger.info("indexed %s (%d pages)", job.doc_name, document.page_count)
+
+    def _run_into_collection(self, job: IndexingJob) -> None:
+        """
+        Index a document into a folder.
+
+        The collection indexer owns parse, Markdown, both indices and the
+        membership record as one unit, so the phases here are coarser than the
+        standalone path -- the alternative is reimplementing that sequence in
+        the job runner and letting the two drift.
+        """
+        indexer = self._collection_indexer or CollectionIndexer()
+        self._update(job.job_id, status=JobStatus.PARSING, started_at=self._clock())
+        indices = indexer.index_document(
+            collection=job.collection or "",
+            source_path=job.source_path,
+            doc_name=job.doc_name,
+        )
+        self._update(
+            job.job_id,
+            status=JobStatus.SAVING,
+            page_count=len(indices.bm25_index.pages),
+        )
+        logger.info(
+            "indexed %s into folder %s (%d segments)",
+            job.doc_name,
+            job.collection,
+            len(indices.bm25_index.pages),
+        )

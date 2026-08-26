@@ -21,6 +21,7 @@ def parse_llm_extraction(raw_text: str) -> LLMExtraction:
     snippet = str(payload.get("evidence_snippet") or "").strip()
     page = _optional_int(payload.get("page"))
     confidence = _optional_float(payload.get("confidence"))
+    document = str(payload.get("document") or "").strip() or None
 
     if not_found or not answer:
         return LLMExtraction(
@@ -36,6 +37,7 @@ def parse_llm_extraction(raw_text: str) -> LLMExtraction:
         evidence_snippet=snippet,
         confidence=confidence,
         raw_text=raw_text,
+        document=document,
     )
 
 

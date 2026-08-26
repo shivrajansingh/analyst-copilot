@@ -1,17 +1,17 @@
 import { Link } from 'react-router-dom'
-import { FileText, MessagesSquare } from 'lucide-react'
+import { FileText } from 'lucide-react'
 import type { FilingSummary } from '@/api/types'
-import { Button } from '@/components/ui/Button'
 import { IndexBadge } from './IndexBadge'
-import { cn } from '@/lib/cn'
 
-export function FilingTable({
-  filings,
-  onAsk,
-}: {
-  filings: FilingSummary[]
-  onAsk: (docName: string) => void
-}) {
+/**
+ * The top-level document inventory.
+ *
+ * These are documents indexed outside any folder — by `scripts/index_all.py`,
+ * mostly. Questions are asked of folders, so there is no "Ask" action here:
+ * add the document to a folder and ask there. Showing a button that leads to a
+ * scope chat no longer accepts would be worse than showing none.
+ */
+export function FilingTable({ filings }: { filings: FilingSummary[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-surface">
       <table className="w-full border-collapse text-sm">
@@ -30,14 +30,10 @@ export function FilingTable({
             <th scope="col" className="px-4 py-2.5 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
               Embeddings
             </th>
-            <th scope="col" className="px-4 py-2.5">
-              <span className="sr-only">Actions</span>
-            </th>
           </tr>
         </thead>
         <tbody>
           {filings.map((filing) => {
-            const searchable = filing.bm25.state === 'ready' && filing.vector.state === 'ready'
             return (
               <tr
                 key={filing.doc_name}
@@ -60,19 +56,6 @@ export function FilingTable({
                 </td>
                 <td className="px-4 py-3">
                   <IndexBadge kind="Embeddings" info={filing.vector} />
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <Button
-                    size="sm"
-                    variant={searchable ? 'secondary' : 'ghost'}
-                    disabled={!searchable}
-                    onClick={() => onAsk(filing.doc_name)}
-                    className={cn(!searchable && 'cursor-not-allowed')}
-                    title={searchable ? 'Ask a question' : 'Both indices must be ready first'}
-                  >
-                    <MessagesSquare className="h-3.5 w-3.5" />
-                    Ask
-                  </Button>
                 </td>
               </tr>
             )

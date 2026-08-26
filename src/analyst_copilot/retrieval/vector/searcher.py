@@ -17,16 +17,29 @@ class VectorSearcher:
     def __init__(self, embedding_client: Optional[EmbeddingClient] = None) -> None:
         self._embedding_client = embedding_client or get_embedding_client()
 
+    def embed_query(self, query: str) -> List[float]:
+        """Embed a query once, for a caller that will reuse it across documents."""
+        return self._embedding_client.embed_query(query)
+
     def search(
         self,
         index: VectorIndex,
         query: str,
         top_k: int = 5,
+        query_vector: Optional[List[float]] = None,
     ) -> SearchResult:
+        """
+        Rank a document's pages against the query by cosine similarity.
+
+        `query_vector` lets a caller supply an embedding it already has.
+        Searching a folder of twenty filings otherwise embeds the same question
+        twenty times, which is twenty network round trips for one answer.
+        """
         if top_k <= 0:
             raise ValueError("top_k must be positive")
 
-        query_vector = self._embedding_client.embed_query(query)
+        if query_vector is None:
+            query_vector = self._embedding_client.embed_query(query)
         scores = cosine_similarity_matrix(query_vector, index.vectors)
 
         ranked_indices = sorted(

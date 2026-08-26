@@ -15,7 +15,13 @@ export interface Message {
 
 export interface Conversation {
   id: string
-  doc_name: string
+  /**
+   * The folder this thread is pinned to.
+   *
+   * A thread never changes folder: switching starts a new one, so every
+   * citation in a thread stays checkable against the same set of documents.
+   */
+  collection: string
   title: string
   created_at: string
   updated_at: string
@@ -32,7 +38,7 @@ export interface Conversation {
 interface ConversationState {
   conversations: Record<string, Conversation>
   order: string[]
-  create: (docName: string) => Conversation
+  create: (collection: string) => Conversation
   get: (id: string) => Conversation | undefined
   listFor: (userScope?: string) => Conversation[]
   appendMessage: (id: string, message: Message) => void
@@ -40,6 +46,9 @@ interface ConversationState {
   rename: (id: string, title: string) => void
   remove: (id: string) => void
 }
+
+/** The v1 row shape, kept only so the migration above can read it. */
+type LegacyConversation = Conversation & { doc_name?: string }
 
 const newId = () => `c_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
 
@@ -49,11 +58,11 @@ export const useConversationStore = create<ConversationState>()(
       conversations: {},
       order: [],
 
-      create: (docName) => {
+      create: (collection) => {
         const now = new Date().toISOString()
         const conversation: Conversation = {
           id: newId(),
-          doc_name: docName,
+          collection,
           title: 'New conversation',
           created_at: now,
           updated_at: now,
@@ -130,7 +139,27 @@ export const useConversationStore = create<ConversationState>()(
           return { conversations: rest, order: state.order.filter((other) => other !== id) }
         }),
     }),
-    { name: 'analyst-copilot.conversations' },
+    {
+      name: 'analyst-copilot.conversations',
+      // v1 pinned a thread to one filing (`doc_name`); v2 pins it to a folder.
+      // Without this, every thread already in a browser would read its scope as
+      // undefined and render a blank row in the sidebar. The old value is
+      // carried across so the history stays readable — but a thread migrated
+      // this way names a filing, not a folder, so asking in it will not resolve
+      // until the reader picks a folder, which starts a new thread anyway.
+      version: 2,
+      migrate: (persisted: unknown, from: number) => {
+        if (from >= 2) return persisted as ConversationState
+        const state = persisted as { conversations?: Record<string, LegacyConversation> }
+        const conversations = Object.fromEntries(
+          Object.entries(state?.conversations ?? {}).map(([id, conversation]) => [
+            id,
+            { ...conversation, collection: conversation.collection ?? conversation.doc_name ?? '' },
+          ]),
+        )
+        return { ...(persisted as object), conversations } as ConversationState
+      },
+    },
   ),
 )
 

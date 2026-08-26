@@ -32,10 +32,18 @@ export function EvidencePanel({ result }: { result: ChatResponse | null }) {
 
   return (
     <>
+      {result.collection && (
+        <p className="border-b border-line px-4 py-2 text-2xs text-ink-subtle">
+          Searched {result.searched_documents} document
+          {result.searched_documents === 1 ? '' : 's'} in{' '}
+          <span className="text-ink-muted">{result.collection}</span>
+        </p>
+      )}
       {result.found && result.evidence ? (
         <div className="animate-fade-up">
           <CitedPage
             evidence={result.evidence}
+            collection={result.collection}
             onOpenFull={citedHit ? () => setOpenHit(citedHit) : undefined}
           />
           <RetrievalTrace retrieval={result.retrieval} onOpenPage={setOpenHit} />
@@ -57,7 +65,8 @@ export function EvidencePanel({ result }: { result: ChatResponse | null }) {
       )}
 
       <PageViewerModal
-        docName={openHit ? result.doc_name : null}
+        docName={openHit ? openHit.doc_name || result.doc_name : null}
+        collection={result.collection}
         hit={openHit}
         snippet={result.evidence?.snippet}
         onClose={() => setOpenHit(null)}

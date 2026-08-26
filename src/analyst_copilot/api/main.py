@@ -19,7 +19,7 @@ from fastapi.responses import RedirectResponse
 from analyst_copilot.api.config import ApiSettings, get_api_settings
 from analyst_copilot.api.dependencies import get_job_manager
 from analyst_copilot.api.errors import register_exception_handlers
-from analyst_copilot.api.routers import chat, filings, health
+from analyst_copilot.api.routers import chat, collections, filings, health
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def create_app(settings: Optional[ApiSettings] = None) -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.cors_origins,
             allow_credentials=False,
-            allow_methods=["GET", "POST"],
+            allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["*"],
         )
 
@@ -65,6 +65,7 @@ def create_app(settings: Optional[ApiSettings] = None) -> FastAPI:
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(filings.router, prefix=API_PREFIX)
     app.include_router(filings.jobs_router, prefix=API_PREFIX)
+    app.include_router(collections.router, prefix=API_PREFIX)
     app.include_router(chat.router, prefix=API_PREFIX)
 
     @app.get("/", include_in_schema=False)

@@ -8,9 +8,19 @@ import { Check, ShieldCheck } from 'lucide-react'
  * whether the guarantee is the one they needed.
  */
 const CHECKS = [
-  { label: 'Cited page was in the retrieved set', detail: 'the model cannot cite a page it never saw' },
-  { label: 'Every figure traces to the page', detail: 'compared by significant digits, so units may differ' },
-  { label: 'Quoted snippet appears on the page', detail: 'the evidence text was matched, not paraphrased' },
+  {
+    label: 'Every figure traces to the cited page',
+    detail: 'compared by significant digits, so a filing in millions supports an answer in billions',
+  },
+  {
+    label: 'The quoted snippet appears there',
+    detail: 'the evidence text was matched against the page, not paraphrased',
+  },
+  {
+    label: 'The citation points where the evidence is',
+    detail:
+      'the page the model named is a hint; the citation follows the page that actually carries the proof',
+  },
 ]
 
 export function VerificationStrip() {

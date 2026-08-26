@@ -15,16 +15,18 @@ import { cn } from '@/lib/cn'
  */
 export function PageViewerModal({
   docName,
+  collection,
   hit,
   snippet,
   onClose,
 }: {
   docName: string | null
+  collection?: string | null
   hit: RetrievedPage | null
   snippet?: string
   onClose: () => void
 }) {
-  const { data, isLoading, error } = usePage(docName, hit?.page ?? null)
+  const { data, isLoading, error } = usePage(docName, hit?.page ?? null, collection)
   const open = Boolean(docName && hit)
 
   return (
@@ -33,7 +35,7 @@ export function PageViewerModal({
       onClose={onClose}
       title={
         <span className="font-mono">
-          {docName} · page {hit?.display_page}
+          {docName} · {hit?.label || `page ${hit?.display_page}`}
         </span>
       }
       subtitle={

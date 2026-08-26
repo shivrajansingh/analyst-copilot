@@ -37,6 +37,7 @@ JSON schema:
 {
   "not_found": boolean,
   "answer": string,
+  "document": string or null,
   "page": number or null,
   "evidence_snippet": string,
   "confidence": number between 0 and 1
@@ -45,16 +46,44 @@ JSON schema:
 When not_found is true, answer must be empty and page must be null.
 """
 
+MULTI_DOCUMENT_RULES = """
+The excerpts come from several documents in one folder. Two extra rules:
 
-def build_user_prompt(question: str, hits: List[ScoredPage], max_chars: int) -> str:
+- Set `document` to the `document` value of the excerpt you cite, copied
+  exactly. Page numbers repeat across documents -- page 59 exists in all of
+  them -- so a page without a document names nothing.
+- Documents in a folder are usually the same company across years, or related
+  filings from one period. Read the fiscal year and entity in each excerpt and
+  answer from the one the question asks about. Do not blend figures from two
+  documents into one number unless the question asks for a comparison, and when
+  it does, say which figure came from which document.
+"""
+
+
+def build_system_prompt(multi_document: bool = False) -> str:
+    """The system prompt, with the folder-specific rules only when they apply."""
+    if not multi_document:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + MULTI_DOCUMENT_RULES
+
+
+def build_user_prompt(
+    question: str,
+    hits: List[ScoredPage],
+    max_chars: int,
+    multi_document: bool = False,
+) -> str:
     blocks: List[str] = [f"Question:\n{question}\n", "Excerpts:"]
     for hit in hits:
         page_no = hit.page.citation_page
         text = hit.page.text[:max_chars]
         # The label names the segment the way its source does, so an excerpt
         # from a worksheet is not presented to the model as a page of prose.
+        # The document is named only when there is more than one, so a
+        # single-document question is not invited to cite anything else.
+        document = f'document="{hit.page.doc_name}" ' if multi_document else ""
         blocks.append(
-            f"\n--- excerpt rank={hit.rank} page={page_no} "
+            f"\n--- excerpt rank={hit.rank} {document}page={page_no} "
             f"location=\"{hit.page.citation_label}\" "
             f"fused_score={hit.score:.4f} ---\n{text}"
         )

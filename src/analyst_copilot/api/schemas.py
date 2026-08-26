@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from analyst_copilot.api.jobs import IndexingJob, JobStatus
 from analyst_copilot.services.qa.models import QAAnswer
@@ -94,6 +94,10 @@ class IndexingJobResponse(BaseModel):
     over_budget: bool
     page_count: Optional[int] = None
     error: Optional[str] = None
+    collection: Optional[str] = Field(
+        default=None, description="The folder this document is being indexed into."
+    )
+    source_format: Optional[str] = None
 
     @classmethod
     def from_job(cls, job: IndexingJob) -> "IndexingJobResponse":
@@ -106,6 +110,8 @@ class IndexingJobResponse(BaseModel):
             over_budget=job.over_budget,
             page_count=job.page_count,
             error=job.error,
+            collection=job.collection,
+            source_format=job.source_format,
         )
 
 
@@ -172,9 +178,85 @@ class PageResponse(BaseModel):
     )
 
 
+class CollectionCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80, description="Folder name.")
+    description: str = Field(default="", max_length=500)
+
+
+class CollectionDocumentInfo(BaseModel):
+    """One document inside a folder, and whether it can be searched yet."""
+
+    doc_name: str
+    source_file: str = ""
+    source_format: Optional[str] = None
+    segment_count: Optional[int] = None
+    added_at: float = 0.0
+    state: IndexState
+
+
+class CollectionSummary(BaseModel):
+    """A folder, its documents, and how much of it is ready to answer questions."""
+
+    name: str
+    description: str = ""
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    document_count: int = 0
+    ready_count: int = 0
+    searchable: bool = Field(
+        default=False,
+        description="True once at least one document is indexed. A folder does "
+        "not wait for its slowest member before it can answer.",
+    )
+    documents: List[CollectionDocumentInfo] = Field(default_factory=list)
+
+
+class CollectionListResponse(BaseModel):
+    collections: List[CollectionSummary]
+
+
+class RejectedUpload(BaseModel):
+    """A file that never became a job, and why."""
+
+    filename: str
+    code: str
+    message: str
+
+
+class CollectionUploadResponse(BaseModel):
+    """
+    The outcome of a multi-file upload.
+
+    Partial success is the normal case and is reported as such: one unsupported
+    file among twelve must not discard the other eleven.
+    """
+
+    collection: str
+    accepted: List[IndexingJobResponse] = Field(default_factory=list)
+    rejected: List[RejectedUpload] = Field(default_factory=list)
+
+
 class ChatRequest(BaseModel):
-    doc_name: str = Field(min_length=1, description="Filing to answer from.")
+    """
+    One question, scoped to either a folder or a single document.
+
+    Exactly one of `collection` and `doc_name` is required. A folder searches
+    every indexed document inside it; the answer still cites exactly one.
+    """
+
     question: str = Field(min_length=3, max_length=2000)
+    doc_name: Optional[str] = Field(
+        default=None, min_length=1, description="Single document to answer from."
+    )
+    collection: Optional[str] = Field(
+        default=None, min_length=1, description="Folder to answer from."
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "ChatRequest":
+        if bool(self.doc_name) == bool(self.collection):
+            raise ValueError("Provide exactly one of 'collection' or 'doc_name'.")
+        return self
 
 
 class RetrievedPage(BaseModel):
@@ -185,8 +267,14 @@ class RetrievedPage(BaseModel):
     analyst to trust the ranking. `ScoredPage` already carries all of this.
     """
 
+    doc_name: str = Field(
+        default="",
+        description="Which document this page belongs to. Page numbers repeat "
+        "across a folder, so a page without a document names nothing.",
+    )
     page: int
     display_page: int
+    label: str = ""
     rank: int
     fused_score: float
     bm25_score: Optional[float] = None
@@ -203,7 +291,16 @@ class ChatResponse(BaseModel):
     from a missing field.
     """
 
-    doc_name: str
+    doc_name: str = Field(
+        description="The document the answer came from. On a folder question "
+        "this is the member document that carried the evidence, not the folder.",
+    )
+    collection: Optional[str] = Field(
+        default=None, description="The folder searched, when the question was folder-scoped."
+    )
+    searched_documents: int = Field(
+        default=1, description="How many documents retrieval actually looked at."
+    )
     question: str
     found: bool
     answer: str
@@ -234,6 +331,8 @@ class ChatResponse(BaseModel):
             )
         return cls(
             doc_name=answer.doc_name,
+            collection=answer.collection,
+            searched_documents=answer.searched_documents,
             question=answer.question,
             found=answer.found,
             answer=answer.answer,
@@ -249,13 +348,19 @@ def _retrieval_from(answer: QAAnswer) -> List[RetrievedPage]:
     hits: List["ScoredPage"] = answer.retrieval.hits
     return [
         RetrievedPage(
+            doc_name=hit.page.doc_name,
             page=hit.page.citation_page,
             display_page=hit.page.citation_page + 1,
+            label=hit.page.citation_label,
             rank=hit.rank,
             fused_score=round(hit.score, 4),
             bm25_score=round(hit.bm25_score, 4) if hit.bm25_score is not None else None,
             vector_score=round(hit.vector_score, 4) if hit.vector_score is not None else None,
-            cited=answer.found and hit.page.citation_page == answer.page,
+            cited=(
+                answer.found
+                and hit.page.citation_page == answer.page
+                and hit.page.doc_name == answer.doc_name
+            ),
         )
         for hit in hits
     ]

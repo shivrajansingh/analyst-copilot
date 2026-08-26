@@ -1,11 +1,19 @@
-"""Score normalization and fusion for hybrid retrieval."""
+"""Score normalization and fusion for hybrid retrieval.
+
+Scores are keyed by whatever identifies a page to the caller. Searching one
+document keys by `page_index`; searching a folder keys by `(doc_name,
+page_index)`, because page 59 exists in every filing in it. The arithmetic is
+identical either way, so the key is typed as a hashable rather than an int.
+"""
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, Hashable, List, Tuple, TypeVar
+
+Key = TypeVar("Key", bound=Hashable)
 
 
-def min_max_normalize(scores: Dict[int, float]) -> Dict[int, float]:
+def min_max_normalize(scores: Dict[Key, float]) -> Dict[Key, float]:
     """Normalize scores to [0, 1]. Empty input returns empty output."""
     if not scores:
         return {}
@@ -22,11 +30,11 @@ def min_max_normalize(scores: Dict[int, float]) -> Dict[int, float]:
 
 
 def weighted_fusion(
-    bm25_scores: Dict[int, float],
-    vector_scores: Dict[int, float],
+    bm25_scores: Dict[Key, float],
+    vector_scores: Dict[Key, float],
     bm25_weight: float,
     vector_weight: float,
-) -> Dict[int, float]:
+) -> Dict[Key, float]:
     """
     Fuse lexical and dense scores with min-max normalization.
 
@@ -39,7 +47,7 @@ def weighted_fusion(
     bm25_norm = min_max_normalize(bm25_scores)
     vector_norm = min_max_normalize(vector_scores)
 
-    fused: Dict[int, float] = {}
+    fused: Dict[Key, float] = {}
     for page_idx in candidate_ids:
         fused[page_idx] = (
             bm25_weight * bm25_norm.get(page_idx, 0.0)
@@ -48,14 +56,14 @@ def weighted_fusion(
     return fused
 
 
-def ranks_from_scores(scores: Dict[int, float]) -> Dict[int, int]:
+def ranks_from_scores(scores: Dict[Key, float]) -> Dict[Key, int]:
     """Convert scores to 1-based ranks (highest score = rank 1)."""
     ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     return {page_idx: rank for rank, (page_idx, _) in enumerate(ordered, start=1)}
 
 
 def reciprocal_rank_fusion(
-    rank_lists: List[Dict[int, int]],
+    rank_lists: List[Dict[Key, int]],
     rrf_k: int = 60,
 ) -> Dict[int, float]:
     """
@@ -66,7 +74,7 @@ def reciprocal_rank_fusion(
     if rrf_k <= 0:
         raise ValueError("rrf_k must be positive")
 
-    fused: Dict[int, float] = {}
+    fused: Dict[Key, float] = {}
     candidate_ids = set().union(*rank_lists) if rank_lists else set()
     for page_idx in candidate_ids:
         total = 0.0
@@ -79,8 +87,8 @@ def reciprocal_rank_fusion(
 
 
 def combine_fusion_scores(
-    rrf_scores: Dict[int, float],
-    weighted_scores: Dict[int, float],
+    rrf_scores: Dict[Key, float],
+    weighted_scores: Dict[Key, float],
     rrf_weight: float,
     weighted_weight: float,
 ) -> Dict[int, float]:
@@ -97,7 +105,7 @@ def combine_fusion_scores(
     }
 
 
-def rank_by_score(scores: Dict[int, float], top_k: int) -> List[Tuple[int, float]]:
+def rank_by_score(scores: Dict[Key, float], top_k: int) -> List[Tuple[Key, float]]:
     """Return top-k (page_index, score) pairs sorted by descending score."""
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     return ranked[:top_k]

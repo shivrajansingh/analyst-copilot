@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { FileStack, Search } from 'lucide-react'
 import type { IndexState } from '@/api/types'
 import { useAddFiling, useFilings, useJobPolling } from '@/hooks/useFilings'
@@ -23,7 +23,6 @@ const FILTERS: { key: Filter; label: string }[] = [
 ]
 
 export function FilingsPage() {
-  const navigate = useNavigate()
   const toast = useToast()
   const { data: filings, isLoading, error } = useFilings()
   const addFiling = useAddFiling()
@@ -73,8 +72,12 @@ export function FilingsPage() {
         <header className="mb-6">
           <h1 className="text-lg font-semibold tracking-tight text-ink">Filings</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            Every filing the assistant knows about, and the state of each retrieval index.
-            Both must be ready before a filing can be searched.
+            Documents indexed outside any folder, and the state of each retrieval index.
+            Questions are asked of{' '}
+            <Link to="/folders" className="text-accent underline underline-offset-2">
+              folders
+            </Link>
+            , so add a document to one to ask about it.
           </p>
         </header>
 
@@ -151,10 +154,7 @@ export function FilingsPage() {
           )}
 
           {!isLoading && visible.length > 0 && (
-            <FilingTable
-              filings={visible}
-              onAsk={(docName) => navigate(`/chat?doc=${encodeURIComponent(docName)}`)}
-            />
+            <FilingTable filings={visible} />
           )}
         </div>
       </div>

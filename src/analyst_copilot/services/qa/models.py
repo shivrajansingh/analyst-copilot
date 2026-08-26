@@ -22,6 +22,9 @@ class LLMExtraction:
     evidence_snippet: str = ""
     confidence: Optional[float] = None
     raw_text: str = ""
+    # Which document the model cited. None when the question was scoped to a
+    # single document, where there is nothing to disambiguate.
+    document: Optional[str] = None
 
 
 @dataclass
@@ -47,6 +50,10 @@ class QAAnswer:
     # "sheet 'Q4 Revenue'" for a workbook.
     location_label: Optional[str] = None
     segment_kind: Optional[SegmentKind] = None
+    # Set when the question was asked of a folder. `doc_name` is then the
+    # document the evidence came from, and this is the folder searched.
+    collection: Optional[str] = None
+    searched_documents: int = 1
 
     @property
     def location_adjusted(self) -> bool:

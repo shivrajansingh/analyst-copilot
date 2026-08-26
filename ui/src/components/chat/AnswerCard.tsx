@@ -42,7 +42,7 @@ export function AnswerCard({
           <div className="mt-4">
             <CitationChip
               docName={result.evidence.doc_name}
-              displayPage={result.evidence.display_page}
+              label={result.evidence.label || `p.${result.evidence.display_page}`}
               onClick={onOpenEvidence}
               active={active}
             />

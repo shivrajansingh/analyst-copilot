@@ -72,6 +72,10 @@ class PageSupport:
     def page(self) -> int:
         return self.hit.page.citation_page
 
+    @property
+    def doc_name(self) -> str:
+        return self.hit.page.doc_name
+
 
 @dataclass
 class VerificationResult:
@@ -83,6 +87,10 @@ class VerificationResult:
     cited_page: Optional[int] = None
     support_level: SupportLevel = SupportLevel.NONE
     page_shift: int = 0
+    doc_name: Optional[str] = None
+    # Set when the answer was found in a different document from the one the
+    # model named. Only possible on a folder-scoped question.
+    cited_doc_name: Optional[str] = None
 
     @property
     def relocated(self) -> bool:
@@ -130,33 +138,50 @@ class AnswerVerifier:
                 reason = "evidence_not_on_any_page"
             return VerificationResult(ok=False, reason=reason, cited_page=cited)
 
-        best = _best(supported, prefer_page=cited)
+        cited_doc = extraction.document
+        best = _best(supported, prefer_page=cited, prefer_doc=cited_doc)
         quote = extraction.evidence_snippet
 
         if cited is None:
-            return self._accept(best, cited, LocationMatch.INFERRED, "ok_inferred_page", quote)
+            return self._accept(best, extraction, LocationMatch.INFERRED, "ok_inferred_page", quote)
 
-        on_cited = next((s for s in supported if s.page == cited), None)
+        on_cited = next(
+            (s for s in supported if s.page == cited and _same_doc(s.doc_name, cited_doc)),
+            None,
+        )
         if on_cited is not None:
-            return self._accept(on_cited, cited, LocationMatch.EXACT, "ok", quote)
+            return self._accept(on_cited, extraction, LocationMatch.EXACT, "ok", quote)
 
+        # A page-number tolerance only means anything inside one document. Page
+        # 60 of a different filing is not "near" page 61 of this one -- it is a
+        # different document, and only verbatim evidence justifies moving there.
+        same_document = _same_doc(best.doc_name, cited_doc)
         shift = abs(best.page - cited)
-        if shift <= self._tolerance:
+        if same_document and shift <= self._tolerance:
             # A one- or two-page difference is what two paginations of the same
             # document look like. The evidence decides; the citation follows it.
-            return self._accept(best, cited, LocationMatch.ADJUSTED, "ok_page_adjusted", quote)
+            return self._accept(
+                best, extraction, LocationMatch.ADJUSTED, "ok_page_adjusted", quote
+            )
 
         if best.level is SupportLevel.VERBATIM:
-            # Far from what the model said, but the quoted evidence is on this
-            # page word for word. Trust the text over the number.
-            return self._accept(best, cited, LocationMatch.RELOCATED, "ok_page_relocated", quote)
+            # Far from what the model said, but the quoted evidence is there
+            # word for word. Trust the text over the coordinates.
+            return self._accept(
+                best, extraction, LocationMatch.RELOCATED, "ok_page_relocated", quote
+            )
 
-        # Supported only by loose figure matching, on a page nowhere near the
-        # one cited: that is the shape of a number coinciding, not of evidence.
+        # Supported only by loose figure matching, nowhere near the citation:
+        # that is the shape of a number coinciding, not of evidence.
         return VerificationResult(
             ok=False,
-            reason="evidence_too_far_from_citation",
+            reason=(
+                "evidence_in_a_different_document"
+                if not same_document
+                else "evidence_too_far_from_citation"
+            ),
             cited_page=cited,
+            cited_doc_name=cited_doc,
             support_level=best.level,
             page_shift=shift,
         )
@@ -164,7 +189,7 @@ class AnswerVerifier:
     @staticmethod
     def _accept(
         support: PageSupport,
-        cited: Optional[int],
+        extraction: LLMExtraction,
         match: LocationMatch,
         reason: str,
         quote: str,
@@ -173,6 +198,7 @@ class AnswerVerifier:
         # the head of the page, so the reader is never shown a "quotation" that
         # verification could not find.
         snippet = quote if (quote and support.snippet_ok) else support.hit.page.text[:280]
+        cited = extraction.page
         return VerificationResult(
             ok=True,
             reason=reason,
@@ -182,6 +208,8 @@ class AnswerVerifier:
             cited_page=cited,
             support_level=support.level,
             page_shift=abs(support.page - cited) if cited is not None else 0,
+            doc_name=support.doc_name,
+            cited_doc_name=extraction.document,
         )
 
     @staticmethod
@@ -211,18 +239,43 @@ class AnswerVerifier:
         )
 
 
-def _best(supports: List[PageSupport], prefer_page: Optional[int]) -> PageSupport:
+def _same_doc(doc_name: str, cited_doc: Optional[str]) -> bool:
+    """
+    Whether a page belongs to the document the model named.
+
+    True when the model named no document, which is every single-document
+    question: there is nothing to disambiguate, so nothing to disagree with.
+    Comparison is loose because a model asked to echo `AMD_2022_10K` will
+    sometimes return `AMD 2022 10-K`.
+    """
+    if not cited_doc:
+        return True
+    return _slug(doc_name) == _slug(cited_doc)
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _best(
+    supports: List[PageSupport],
+    prefer_page: Optional[int],
+    prefer_doc: Optional[str] = None,
+) -> PageSupport:
     """
     The most convincing supporting page.
 
-    Ties break towards the page the model named, then towards the page retrieval
-    ranked highest -- in that order, because a tie means the evidence cannot
-    choose and the next most informative signal should.
+    Ties break towards the document the model named, then towards the page it
+    named, then towards the page retrieval ranked highest -- in that order,
+    because a tie means the evidence cannot choose and the next most
+    informative signal should. Document outranks page: being in the right
+    filing matters more than being near the right page number in the wrong one.
     """
 
-    def key(support: PageSupport) -> Tuple[int, int, int]:
+    def key(support: PageSupport) -> Tuple[int, int, int, int]:
+        in_doc = 1 if _same_doc(support.doc_name, prefer_doc) else 0
         near = -abs(support.page - prefer_page) if prefer_page is not None else 0
-        return (int(support.level), near, -support.hit.rank)
+        return (int(support.level), in_doc, near, -support.hit.rank)
 
     return max(supports, key=key)
 

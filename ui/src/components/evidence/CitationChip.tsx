@@ -2,17 +2,21 @@ import { FileText } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
 /**
- * The inline citation. Monospace, because it names a document and a page and
+ * The inline citation. Monospace, because it names a document and a place and
  * both are read as identifiers rather than prose.
+ *
+ * `label` comes from the API rather than being formatted here: a workbook
+ * citation reads "sheet 'Q4 Revenue'" and a CSV one reads "rows 402-601".
+ * Writing `p.{n}` locally would put a page number on a document that has none.
  */
 export function CitationChip({
   docName,
-  displayPage,
+  label,
   onClick,
   active,
 }: {
   docName: string
-  displayPage: number
+  label: string
   onClick?: () => void
   active?: boolean
 }) {
@@ -30,7 +34,7 @@ export function CitationChip({
       <FileText className="h-3 w-3" />
       <span className="truncate">{docName}</span>
       <span className="text-ink-subtle group-hover:text-accent/70">·</span>
-      <span className="tabular font-semibold">p.{displayPage}</span>
+      <span className="tabular truncate font-semibold">{label}</span>
     </button>
   )
 }

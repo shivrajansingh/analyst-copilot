@@ -4,6 +4,7 @@ import type { Evidence } from '@/api/types'
 import { usePage } from '@/hooks/usePage'
 import { Badge } from '@/components/ui/Badge'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { LocationNote } from './LocationNote'
 import { PageText } from './PageText'
 import { cn } from '@/lib/cn'
 
@@ -17,22 +18,29 @@ import { cn } from '@/lib/cn'
  */
 export function CitedPage({
   evidence,
+  collection,
   onOpenFull,
 }: {
   evidence: Evidence
+  collection?: string | null
   onOpenFull?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const { data, isLoading } = usePage(expanded ? evidence.doc_name : null, evidence.page)
+  const { data, isLoading } = usePage(
+    expanded ? evidence.doc_name : null,
+    evidence.page,
+    collection,
+  )
 
   return (
     <section className="px-4 py-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-2xs font-semibold uppercase tracking-wider text-ink-muted">
-          Cited page
+          Cited {evidence.segment_kind === 'page' ? 'page' : 'location'}
         </h3>
         <div className="flex items-center gap-1.5">
-          <Badge tone="accent">page {evidence.display_page}</Badge>
+          {/* Named the way the source names it: a workbook has no page 4. */}
+          <Badge tone="accent">{evidence.label || `page ${evidence.display_page}`}</Badge>
           {onOpenFull && (
             <button
               onClick={onOpenFull}
@@ -45,7 +53,9 @@ export function CitedPage({
         </div>
       </div>
 
-      <p className="mb-2.5 truncate font-mono text-xs text-ink-muted">{evidence.doc_name}</p>
+      <p className="truncate font-mono text-xs text-ink-muted">{evidence.doc_name}</p>
+      <LocationNote evidence={evidence} />
+      <div className="mb-2.5" />
 
       <blockquote className="relative rounded-lg border border-line bg-surface-sunken p-3.5">
         <Quote className="absolute right-2.5 top-2.5 h-3.5 w-3.5 text-line-strong" aria-hidden />

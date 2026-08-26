@@ -1,9 +1,9 @@
 # Analyst Copilot — Frontend Plan
 
-**Status:** the React app is built and running against the live API. Two gaps:
-the backend now ingests PDF, Word, Excel and CSV and the UI still speaks only
-`page N` of an HTML filing (R0a-R0f); and the persistence and deployment layers
-— Postgres, real auth, Docker Compose — do not exist.
+**Status:** the React app is built and running against the live API, and now works
+in **folders**: create one, drop several documents of any supported format into it,
+and ask questions of the whole folder. What is missing is the persistence and
+deployment layer — Postgres, real auth, Docker Compose.
 **Scope:** a React application in `ui/`, a Postgres-backed API, and a Docker Compose
 stack that runs the whole product.
 
@@ -46,12 +46,12 @@ Ordered by what blocks what.
 
 | # | Work | Blocks |
 |---|---|---|
-| **R0a** | **Multi-format upload**: accept PDF / Word / Excel / CSV / Markdown alongside HTML in the dropzone; per-type icons, per-type size limits, client-side sniffing so a mislabelled file is caught before it is sent. Backend already accepts all of them | The library and chat screens for anything but HTML |
-| **R0b** | **Format-aware processing status**: the job feed now has a `parsing` phase worth showing — a 160-page PDF takes ~57s to parse before embedding even starts. Show the phase, the format, and the segment count as it is discovered | Honest progress on non-HTML uploads |
-| **R0c** | **Non-page citations**: render `sheet 'Q4 Revenue'` and `rows 402-601` wherever the UI currently hardcodes `page N`. A workbook has no page 4 | Excel/CSV answers being citable at all |
-| **R0d** | **Adjusted-location disclosure**: when the verifier moves a citation onto the page that actually carries the evidence, say so in the evidence panel rather than silently showing a different number than the model produced | Trust in the flexible-location behaviour |
-| **R0e** | **Markdown page viewer**: the page viewer shows the stored Markdown, tables rendered as tables. `GET /filings/{doc}/pages/{n}` already returns it | Spot-checking a bad citation |
-| **R0f** | **Unsupported / failed document states**: distinguish "we do not parse this type", "this file is corrupt", and "parsing produced nothing" — three different user actions | Error handling on the upload path |
+| ~~R0a~~ | ~~Multi-format upload~~ — **done**. `AddDocumentsDropzone` accepts PDF / HTML / Word / Excel / CSV / Markdown, many at once, with magic-byte sniffing before a 64 MB file crosses the wire | — |
+| ~~R0c~~ | ~~Non-page citations~~ — **done**. Every surface reads `evidence.label` / `hit.label`; nothing formats `page N` locally | — |
+| ~~R0d~~ | ~~Adjusted-location disclosure~~ — **done**. `LocationNote` states it when the citation moved, as a note rather than a warning | — |
+| **R0b** | **Per-document parsing progress**: the folder card shows one `JobProgress` per document, but the parsing phase has no counter — `GET /collections/{name}/jobs` would need `segments_parsed` / `segments_total`. A 160-page PDF parses for ~57s against a bar that cannot move | Honest progress on large PDFs |
+| **R0e** | **Markdown page viewer**: `PageResponse.markdown` is returned and unused — the viewer still renders plain text, so a financial statement reads as a wall of prose instead of a table | Spot-checking a bad citation |
+| **R0f** | **Richer failed-document states**: a failed job shows its raw error in `DocumentRow`. Scanned PDFs (no OCR → zero characters) are the predictable support question and deserve their own message | Error handling on the upload path |
 | **R1** | **Docker Compose**: `db`, `migrate`, `api`, `ui` (nginx). Mount `filings/` and `storage/` per §12 Q3 | Everything below; also the live session |
 | **R2** | **Postgres + SQLAlchemy 2.0 + Alembic**, schema per §8 | R3–R6 |
 | **R3** | **Real auth**: `/auth/login`, `/auth/me`, `/auth/logout`; bcrypt, JWT, seeded demo user. Multi-user per §12 Q1 | Replaces the localStorage session |
@@ -219,7 +219,52 @@ them — a reviewer must never be blocked at the door.
   before the question is typed.
 - Right panel is collapsible; on <1280px it becomes a slide-over sheet.
 
-### 4.3 `/filings` — the library and the "Add filing" control
+### 4.2a `/folders` — the folder library and the "Add documents" control
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│  Folders                                                             │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ New folder [ Boeing 2020–2023            ]     [ + Create ]    │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ▼ 3M multi-year               4 documents · all indexed  [Ask] [🗑] │
+│    ┌──────────────────────────────────────────────────────────────┐  │
+│    │  ⬆  Drop documents here — PDF · HTML · Word · Excel · CSV    │  │
+│    │     Select several at once; each is indexed separately        │  │
+│    └──────────────────────────────────────────────────────────────┘  │
+│    ┌──────────────────────────────────────────────────────────────┐  │
+│    │ ✓ ready   3M_2018_10K       HTML     134 pages           [×] │  │
+│    │ ✓ ready   3M_2022_10K       HTML     131 pages           [×] │  │
+│    │ ⟳ indexing segments         CSV        — tables          [×] │  │
+│    │ ✕ failed  scan_2019         PDF        —                 [×] │  │
+│    └──────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ▶ Boeing 2022                 9 of 12 indexed            [Ask] [🗑] │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**Uploads always land in a folder.** A question is rarely about one file, so the
+folder is the unit an analyst works with and the unit the upload targets.
+
+**One progress row per document, not one per folder.** A folder of twelve filings
+must say which one is slow and which has failed; a single bar covering all of them
+says neither.
+
+**Only the open folder polls.** Twelve collapsed folders polling their jobs would be
+twelve requests a second for progress nobody is watching.
+
+**`9 of 12 indexed` is shown, not hidden.** A folder is searchable as soon as one
+document is ready — blocking on the slowest member helps nobody — but an analyst
+asking against a partly-built folder should know the answer may not have seen
+everything yet.
+
+**The size column counts what the document actually has**: `134 pages` for a filing,
+`4 sheets` for a workbook, `— tables` for a CSV still indexing. A workbook does not
+have four pages, and a row that claims it does teaches the analyst to expect a page
+number the citation will never give them.
+
+### 4.3 `/filings` — the top-level document inventory
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -669,22 +714,22 @@ every search slower.
 | Phase | Deliverable | Status |
 |---|---|---|
 | **0** | Compose stack + Postgres + Alembic + auth | ⬜ **Not started** — R1–R3 |
-| **1** | App shell, filing library, add-filing + live job status | 🟨 **Partial** — done for HTML; multi-format upload, type/units columns and the parsing phase are R0a/R0b |
-| **2** | Chat + answer card + evidence panel | 🟨 **Partial** — done for paginated documents; non-page citations and adjusted-location disclosure are R0c/R0d |
-| **2b** | Markdown page viewer + document error states | ⬜ **Not started** — R0e, R0f |
+| **1** | Folder library, multi-file add, per-document job status | ✅ **Done** — create a folder, drop several documents of any format, watch each index |
+| **2** | Chat + answer card + evidence panel | ✅ **Done** — folder-scoped questions, source-named citations, adjusted-location disclosure |
+| **2b** | Markdown page viewer + richer document error states | ⬜ **Not started** — R0e, R0f |
 | **3** | Conversations, history sidebar, decline card | 🟨 **Partial** — all of it works, on localStorage rather than Postgres (R4) |
 | **4** | Settings: providers, connection test, reindex warning | 🟨 **Partial** — reads live config and warns; not writable (R5, R7) |
 | **5** | Polish: dark mode, empty/error/loading states, keyboard paths, a11y pass | 🟨 **Partial** — themes, empty/loading/error states done; a11y audit outstanding (R10) |
 
-**Phases 1 and 2 — the graded surfaces — work end to end for HTML filings**, which is
-the corpus the challenge ships. They regressed to partial when the backend gained
-multi-format parsing: the API now returns worksheets, row blocks and adjusted
-locations that the UI still renders as `page N`. R0a–R0f close that gap and are
-ahead of Phase 0 in priority, because they affect what an analyst sees rather than
-where it is stored.
+**Phases 1 and 2 — the graded surfaces — are complete**, now in their folder form:
+an analyst creates a folder, drops in several documents of any supported format,
+and asks the folder. Verified end to end against a live API on a folder holding two
+10-Ks and two CSVs — the FY2018 question cited `3M_2018_10K` page 59 and the FY2022
+question cited `3M_2022_10K` page 33, with pages from both filings in each retrieved
+set, and a CSV question cited `table 'segments'` rather than inventing a page.
 
-What remains after them is persistence and deployment, which is Phase 0 arriving
-late: the UI was built first because it could be, against an API that already worked.
+What remains is persistence and deployment, which is Phase 0 arriving late: the UI
+was built first because it could be, against an API that already worked.
 
 That ordering was a deliberate trade. It got the graded surfaces demonstrable early, at
 the cost of two adapters (`auth.store.ts`, `conversations.store.ts`) that will be thrown
