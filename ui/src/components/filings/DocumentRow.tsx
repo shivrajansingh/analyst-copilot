@@ -62,7 +62,7 @@ const STATE: Record<
 }
 
 /**
- * One document inside a folder.
+ * One document inside a filing.
  *
  * The size column counts what the document actually has — 160 pages for a PDF,
  * 4 sheets for a workbook — rather than calling everything a page. A workbook
@@ -115,7 +115,7 @@ export function DocumentRow({
         variant="ghost"
         size="sm"
         onClick={onRemove}
-        aria-label={`Remove ${document.doc_name} from this folder`}
+        aria-label={`Remove ${document.doc_name} from this filing`}
       >
         <X className="h-3.5 w-3.5" />
       </Button>

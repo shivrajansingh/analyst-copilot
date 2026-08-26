@@ -323,6 +323,7 @@ class CollectionApiService:
         return CollectionSummary(
             name=collection.name,
             description=collection.description,
+            index_model=self._index_model(name, documents),
             created_at=collection.created_at,
             updated_at=collection.updated_at,
             document_count=len(documents),
@@ -333,6 +334,28 @@ class CollectionApiService:
             searchable=ready > 0,
             documents=documents,
         )
+
+    def _index_model(
+        self,
+        collection: str,
+        documents: List[CollectionDocumentInfo],
+    ) -> Optional[str]:
+        """
+        The embedding model this folder's indices were built with.
+
+        Read from the first indexed document rather than every one: they are all
+        built by the same process with the same configuration, and the reason
+        this is surfaced at all is to be compared against the *configured*
+        model, where any one of them answers the question.
+        """
+        store = self._store.vector_store(collection)
+        for document in documents:
+            if document.state is not IndexState.READY:
+                continue
+            metadata = store.load_metadata(document.doc_name)
+            if metadata is not None:
+                return metadata.embedding_model
+        return None
 
     def _document_state(self, collection: str, doc_name: str) -> IndexState:
         if self._indexer.document_is_indexed(collection, doc_name):

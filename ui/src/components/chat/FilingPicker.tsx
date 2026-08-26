@@ -1,27 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Folder, Search } from 'lucide-react'
+import { Check, ChevronDown, FileStack, Search } from 'lucide-react'
 import type { CollectionSummary } from '@/api/types'
 import { cn } from '@/lib/cn'
 
 /**
- * Choose the folder a conversation is about.
+ * Choose the filing a conversation is about.
  *
- * A question is asked of a folder, not a file: "how did margin move over three
- * years" spans three annual reports, and making the analyst pick one of them
- * first is asking them to answer half the question themselves.
+ * A filing here is a set of documents, and the question is asked of all of
+ * them: "how did margin move over three years" spans three annual reports, and
+ * making the analyst pick one of them first is asking them to answer half the
+ * question themselves.
  *
- * How much of a folder is ready is shown inline — `9 of 12 ready` — because a
- * folder is searchable as soon as one document is indexed, and an analyst
- * asking a question against a partly-built folder should know that the answer
- * may not have seen everything yet.
+ * How much of a filing is ready is shown inline — `9 of 12 ready` — because a
+ * filing is searchable as soon as one document is indexed, and an analyst
+ * asking against a partly-built filing should know the answer may not have seen
+ * everything yet.
  */
-export function FolderPicker({
-  folders,
+export function FilingPicker({
+  filings,
   value,
   onChange,
   disabled,
 }: {
-  folders: CollectionSummary[]
+  filings: CollectionSummary[]
   value: string | null
   onChange: (name: string) => void
   disabled?: boolean
@@ -46,16 +47,16 @@ export function FolderPicker({
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    const ranked = [...folders].sort((a, b) => a.name.localeCompare(b.name))
+    const ranked = [...filings].sort((a, b) => a.name.localeCompare(b.name))
     if (!needle) return ranked
     return ranked.filter(
-      (folder) =>
-        folder.name.toLowerCase().includes(needle) ||
-        folder.documents.some((doc) => doc.doc_name.toLowerCase().includes(needle)),
+      (filing) =>
+        filing.name.toLowerCase().includes(needle) ||
+        filing.documents.some((doc) => doc.doc_name.toLowerCase().includes(needle)),
     )
-  }, [folders, query])
+  }, [filings, query])
 
-  const selected = folders.find((folder) => folder.name === value)
+  const selected = filings.find((filing) => filing.name === value)
 
   return (
     <div ref={containerRef} className="relative">
@@ -71,11 +72,11 @@ export function FolderPicker({
         )}
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          <Folder className="h-4 w-4 shrink-0 text-ink-subtle" />
+          <FileStack className="h-4 w-4 shrink-0 text-ink-subtle" />
           <span className="truncate text-sm text-ink">
-            {selected?.name ?? 'Select a folder'}
+            {selected?.name ?? 'Select a filing'}
           </span>
-          {selected && <ReadyCount folder={selected} />}
+          {selected && <ReadyCount filing={selected} />}
         </span>
         <ChevronDown
           className={cn(
@@ -93,7 +94,7 @@ export function FolderPicker({
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search folders and documents…"
+              placeholder="Search filings and documents…"
               className="w-full bg-transparent text-sm text-ink placeholder:text-ink-subtle focus:outline-none"
             />
           </div>
@@ -101,53 +102,53 @@ export function FolderPicker({
           <ul role="listbox" className="scrollbar-slim max-h-80 overflow-y-auto py-1">
             {matches.length === 0 && (
               <li className="px-3 py-6 text-center text-xs text-ink-subtle">
-                {folders.length === 0
-                  ? 'No folders yet. Create one on the Folders screen and add documents to it.'
+                {filings.length === 0
+                  ? 'No filings yet. Create one on the Filings screen and add documents to it.'
                   : `Nothing matches “${query}”.`}
               </li>
             )}
-            {matches.map((folder) => (
-              <li key={folder.name}>
+            {matches.map((filing) => (
+              <li key={filing.name}>
                 <button
                   role="option"
-                  aria-selected={folder.name === value}
-                  disabled={!folder.searchable}
+                  aria-selected={filing.name === value}
+                  disabled={!filing.searchable}
                   onClick={() => {
-                    onChange(folder.name)
+                    onChange(filing.name)
                     setOpen(false)
                     setQuery('')
                   }}
                   className={cn(
                     'flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition-colors',
-                    folder.searchable ? 'hover:bg-surface' : 'cursor-not-allowed opacity-50',
+                    filing.searchable ? 'hover:bg-surface' : 'cursor-not-allowed opacity-50',
                   )}
                   title={
-                    folder.searchable
+                    filing.searchable
                       ? undefined
-                      : 'No document in this folder is indexed yet'
+                      : 'No document in this filing is indexed yet'
                   }
                 >
                   <span className="flex min-w-0 items-start gap-2">
-                    {folder.name === value ? (
+                    {filing.name === value ? (
                       <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
                     ) : (
                       <span className="w-3.5" />
                     )}
                     <span className="min-w-0">
-                      <span className="block truncate text-[13px] text-ink">{folder.name}</span>
-                      {folder.documents.length > 0 && (
+                      <span className="block truncate text-[13px] text-ink">{filing.name}</span>
+                      {filing.documents.length > 0 && (
                         <span className="mt-0.5 block truncate font-mono text-2xs text-ink-subtle">
-                          {folder.documents
+                          {filing.documents
                             .slice(0, 3)
                             .map((doc) => doc.doc_name)
                             .join(' · ')}
-                          {folder.documents.length > 3 &&
-                            ` +${folder.documents.length - 3} more`}
+                          {filing.documents.length > 3 &&
+                            ` +${filing.documents.length - 3} more`}
                         </span>
                       )}
                     </span>
                   </span>
-                  <ReadyCount folder={folder} />
+                  <ReadyCount filing={filing} />
                 </button>
               </li>
             ))}
@@ -158,8 +159,8 @@ export function FolderPicker({
   )
 }
 
-function ReadyCount({ folder }: { folder: CollectionSummary }) {
-  const complete = folder.ready_count === folder.document_count
+function ReadyCount({ filing }: { filing: CollectionSummary }) {
+  const complete = filing.ready_count === filing.document_count
   return (
     <span
       className={cn(
@@ -168,13 +169,13 @@ function ReadyCount({ folder }: { folder: CollectionSummary }) {
       )}
       title={
         complete
-          ? `${folder.document_count} documents indexed`
-          : `${folder.ready_count} of ${folder.document_count} indexed — answers may not have seen the rest yet`
+          ? `${filing.document_count} documents indexed`
+          : `${filing.ready_count} of ${filing.document_count} indexed — answers may not have seen the rest yet`
       }
     >
       {complete
-        ? `${folder.document_count} doc${folder.document_count === 1 ? '' : 's'}`
-        : `${folder.ready_count}/${folder.document_count} ready`}
+        ? `${filing.document_count} doc${filing.document_count === 1 ? '' : 's'}`
+        : `${filing.ready_count}/${filing.document_count} ready`}
     </span>
   )
 }

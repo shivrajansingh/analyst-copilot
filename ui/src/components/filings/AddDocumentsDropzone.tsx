@@ -42,7 +42,7 @@ export function suffixOf(name: string): string {
 }
 
 /**
- * The "Add documents" control: many files, one folder, one request.
+ * The "Add documents" control: many files, one filing, one request.
  *
  * Checks run here as well as on the server, and the server's remain the ones
  * that count. Doing them in the browser matters more than usual now that PDFs
@@ -55,11 +55,11 @@ export function suffixOf(name: string): string {
 export function AddDocumentsDropzone({
   onSelect,
   busy,
-  folderName,
+  filingName,
 }: {
   onSelect: (files: File[]) => void
   busy?: boolean
-  folderName?: string | null
+  filingName?: string | null
 }) {
   const [dragging, setDragging] = useState(false)
   const [rejected, setRejected] = useState<RejectedFile[]>([])
@@ -107,7 +107,7 @@ export function AddDocumentsDropzone({
         }}
         role="button"
         tabIndex={0}
-        aria-label={folderName ? `Add documents to ${folderName}` : 'Add documents'}
+        aria-label={filingName ? `Add documents to ${filingName}` : 'Add documents'}
         className={cn(
           'group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl',
           'border-2 border-dashed px-6 py-10 text-center transition-all duration-200',
@@ -130,7 +130,7 @@ export function AddDocumentsDropzone({
         <div>
           <p className="text-sm font-medium text-ink">
             {dragging
-              ? `Drop to add to ${folderName ?? 'this folder'}`
+              ? `Drop to add to ${filingName ?? 'this filing'}`
               : 'Drop documents here'}
           </p>
           <p className="mt-1 text-xs text-ink-muted">

@@ -1,9 +1,10 @@
 # Analyst Copilot — Frontend Plan
 
-**Status:** the React app is built and running against the live API, and now works
-in **folders**: create one, drop several documents of any supported format into it,
-and ask questions of the whole folder. What is missing is the persistence and
-deployment layer — Postgres, real auth, Docker Compose.
+**Status:** the React app is built and running against the live API. A **filing**
+is a named set of documents: create one, add documents of any supported format by
+upload or by URL, and ask questions of the whole filing. The per-document library
+screen is gone (§4.4). What is missing is the persistence and deployment layer —
+Postgres, real auth, Docker Compose.
 **Scope:** a React application in `ui/`, a Postgres-backed API, and a Docker Compose
 stack that runs the whole product.
 
@@ -46,10 +47,10 @@ Ordered by what blocks what.
 
 | # | Work | Blocks |
 |---|---|---|
-| ~~R0a~~ | ~~Multi-format upload~~ — **done**. `AddDocumentsDropzone` accepts PDF / HTML / Word / Excel / CSV / Markdown, many at once, with magic-byte sniffing before a 64 MB file crosses the wire | — |
+| ~~R0a~~ | ~~Multi-format upload~~ — **done**. `AddDocumentsDropzone` accepts PDF / HTML / Word / Excel / CSV / Markdown, many at once, with magic-byte sniffing before a 64 MB file crosses the wire; `FetchByUrl` adds one by URL | — |
 | ~~R0c~~ | ~~Non-page citations~~ — **done**. Every surface reads `evidence.label` / `hit.label`; nothing formats `page N` locally | — |
 | ~~R0d~~ | ~~Adjusted-location disclosure~~ — **done**. `LocationNote` states it when the citation moved, as a note rather than a warning | — |
-| **R0b** | **Per-document parsing progress**: the folder card shows one `JobProgress` per document, but the parsing phase has no counter — `GET /collections/{name}/jobs` would need `segments_parsed` / `segments_total`. A 160-page PDF parses for ~57s against a bar that cannot move | Honest progress on large PDFs |
+| **R0b** | **Per-document parsing progress**: the filing card shows one `JobProgress` per document, but the parsing phase has no counter — `GET /collections/{name}/jobs` would need `segments_parsed` / `segments_total`. A 160-page PDF parses for ~57s against a bar that cannot move | Honest progress on large PDFs |
 | **R0e** | **Markdown page viewer**: `PageResponse.markdown` is returned and unused — the viewer still renders plain text, so a financial statement reads as a wall of prose instead of a table | Spot-checking a bad citation |
 | **R0f** | **Richer failed-document states**: a failed job shows its raw error in `DocumentRow`. Scanned PDFs (no OCR → zero characters) are the predictable support question and deserve their own message | Error handling on the upload path |
 | **R1** | **Docker Compose**: `db`, `migrate`, `api`, `ui` (nginx). Mount `filings/` and `storage/` per §12 Q3 | Everything below; also the live session |
@@ -139,8 +140,8 @@ ui/
     ├── api/
     │   ├── client.ts           fetch wrapper: auth header, error → ApiError
     │   ├── types.ts            hand-written mirrors of the API schemas
-    │   └── endpoints/          filings.ts · chat.ts · pages.ts · health.ts
-    ├── hooks/                  useFilings · useJobPolling · usePage · useHealth
+    │   └── endpoints/          collections.ts · chat.ts · pages.ts · health.ts
+    ├── hooks/                  useCollections · usePage · useHealth
     ├── stores/                 auth.store · ui.store · conversations.store
     ├── components/
     │   ├── ui/                 Button Badge Card Input Skeleton Tooltip
@@ -150,10 +151,10 @@ ui/
     │   │                       FilingPicker · ThinkingIndicator
     │   ├── evidence/           EvidencePanel · CitedPage · PageViewerModal
     │   │                       PageText · RetrievalTrace · VerificationStrip
-    │   │                       CitationChip
-    │   └── filings/            FilingTable · IndexBadge · AddFilingDropzone
-    │                           JobProgress
-    ├── pages/                  Login · Chat · Filings · FilingDetail · Settings
+    │   │                       CitationChip · LocationNote
+    │   └── filings/            AddDocumentsDropzone · FetchByUrl
+    │                           DocumentRow · JobProgress
+    ├── pages/                  Login · Chat · Filings · Settings
     ├── lib/                    cn.ts · format.ts
     └── styles/                 globals.css (design tokens)
 ```
@@ -219,13 +220,13 @@ them — a reviewer must never be blocked at the door.
   before the question is typed.
 - Right panel is collapsible; on <1280px it becomes a slide-over sheet.
 
-### 4.2a `/folders` — the folder library and the "Add documents" control
+### 4.3 `/filings` — the filing library and the "Add documents" control
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
-│  Folders                                                             │
+│  Filings                                                             │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ New folder [ Boeing 2020–2023            ]     [ + Create ]    │  │
+│  │ New filing [ Boeing 2020–2023            ]     [ + Create ]    │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ▼ 3M multi-year               4 documents · all indexed  [Ask] [🗑] │
@@ -244,19 +245,25 @@ them — a reviewer must never be blocked at the door.
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Uploads always land in a folder.** A question is rarely about one file, so the
-folder is the unit an analyst works with and the unit the upload targets.
+**A "filing" is a set of documents, not a file.** The product renamed folders to
+filings: an analyst asks questions of *the Boeing 2022 filing*, which may hold the
+10-K, two 10-Qs and a segment spreadsheet. The code still says `collections`,
+because `filing` already names a single 10-K everywhere in the pipeline.
 
-**One progress row per document, not one per folder.** A folder of twelve filings
+**Uploads always land in a filing.** A question is rarely about one file, so the
+filing is the unit an analyst works with and the unit the upload targets. Documents
+arrive by drag-and-drop or by URL.
+
+**One progress row per document, not one per filing.** A filing of twelve documents
 must say which one is slow and which has failed; a single bar covering all of them
 says neither.
 
-**Only the open folder polls.** Twelve collapsed folders polling their jobs would be
+**Only the open filing polls.** Twelve collapsed filings polling their jobs would be
 twelve requests a second for progress nobody is watching.
 
-**`9 of 12 indexed` is shown, not hidden.** A folder is searchable as soon as one
+**`9 of 12 indexed` is shown, not hidden.** A filing is searchable as soon as one
 document is ready — blocking on the slowest member helps nobody — but an analyst
-asking against a partly-built folder should know the answer may not have seen
+asking against a partly-built filing should know the answer may not have seen
 everything yet.
 
 **The size column counts what the document actually has**: `134 pages` for a filing,
@@ -264,59 +271,36 @@ everything yet.
 have four pages, and a row that claims it does teaches the analyst to expect a page
 number the citation will never give them.
 
-### 4.3 `/filings` — the top-level document inventory
+### 4.4 Removed: the per-document library
 
-```text
-┌──────────────────────────────────────────────────────────────────────┐
-│  Filings                                    [ ⬆ Add filing ]         │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │  ⬆  Drop a document here, or browse                            │  │
-│  │     PDF · HTML · Word · Excel · CSV · Markdown   (≤64MB)        │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│  ▶ NEWCO_2024_10K  📕 pdf  parsing… 118/190 pages   0:41 / 10:00     │
-│                                                                      │
-│  [All 78] [Ready 76] [Partial 1] [Failed 1]        🔍 [ search   ]   │
-│  ┌───────────────────┬──────┬───────┬─────────┬────────────┬───────┐ │
-│  │ Document          │ Type │ Units │ BM25    │ Embeddings │       │ │
-│  ├───────────────────┼──────┼───────┼─────────┼────────────┼───────┤ │
-│  │ 3M_2018_10K       │ 📕pdf│ 160 p │ ● ready │ ● ready    │ Chat ⋯│ │
-│  │ 3M_2022_10K       │ 🌐htm│ 131 p │ ● ready │ ● ready    │ Chat ⋯│ │
-│  │ segment_data      │ 📗xls│ 4 sh  │ ● ready │ ● ready    │ Chat ⋯│ │
-│  │ AMCOR_2020_10K    │ 🌐htm│ 122 p │ ● ready │ ○ missing  │ Reix ⋯│ │
-│  │ BROKEN_10K        │ 📕pdf│   —   │ ○ —     │ ✕ failed   │ Retry⋯│ │
-│  └───────────────────┴──────┴───────┴─────────┴────────────┴───────┘ │
-└──────────────────────────────────────────────────────────────────────┘
-```
+There used to be a second screen listing every document indexed outside any
+filing, with its own single-file "Add filing" control. It is gone, along with
+the `/filings/:docName` detail view.
 
-**"Units", not "Pages".** The column counts what the document actually has:
-`160 p` for a PDF, `4 sh` for a workbook, `12 pt` for a Word file with no author
-page breaks. A workbook does not have 4 pages and the table must not claim it
-does — the same rule that governs citations governs the library.
+**Why.** Once a question is asked of a filing, a screen that lists loose
+documents offers nothing an analyst can act on — its "Ask" button led to a chat
+scope the API no longer accepts, and a button that goes nowhere is worse than no
+button. Keeping both would also have meant teaching two mental models for the
+same thing.
+
+The backend endpoints it used (`GET/POST /api/v1/filings`) still exist: they are
+the read path for documents indexed by `scripts/index_all.py`, and `POST /chat`
+still accepts a bare `doc_name`. Nothing in the UI calls them.
+
+**Two rules from that screen survive**, now applied to the document rows inside
+a filing:
+
+**"Units", not "Pages".** A row counts what the document actually has — `160
+pages` for a PDF, `4 sheets` for a workbook, `12 parts` for a Word file with no
+author page breaks. A workbook does not have four pages, and a row that claims
+it does teaches the analyst to expect a page number the citation will never
+give them.
 
 **Type is shown because it changes what a citation means.** Two copies of the
 same 10-K, one HTML and one PDF, paginate differently: measured across the
 practice corpus, 15 of 62 documents disagree by one or two pages between the
-filed HTML and the filer's own PDF. An analyst comparing a citation against
-their own copy needs to know which reading they are looking at.
-
-**BM25 and embeddings are shown as two independent badges**, because they genuinely
-are two independent artefacts on disk and they fail independently — BM25 is local and
-instant, embedding is a network call that can die halfway. A single "indexed" light
-would hide the most common real failure: lexical index present, vectors missing.
-
-Badge states: `ready` (green) · `building` (blue, animated) · `missing` (grey outline)
-· `stale` (amber — built by a different parser version or embedding model) · `failed` (red).
-
-`⋯` menu: Reindex · View detail · Remove index · Copy doc name.
-
-### 4.4 `/filings/:docName` — detail
-
-Two metadata cards side by side (BM25 / Embeddings) showing page count, parser
-version, tokenizer or embedding model, dimensions, truncation cap, built-at and
-size on disk. Below, a page browser for spot-checking what the parser produced —
-the fastest way to explain a bad citation. A "Reindex" action with an explicit
-warning when the current embedding model differs from the one the index was built with.
+filed HTML and the filer's own PDF. An analyst checking a citation against their
+own copy needs to know which reading they are looking at.
 
 ### 4.5 `/settings`
 
@@ -714,16 +698,16 @@ every search slower.
 | Phase | Deliverable | Status |
 |---|---|---|
 | **0** | Compose stack + Postgres + Alembic + auth | ⬜ **Not started** — R1–R3 |
-| **1** | Folder library, multi-file add, per-document job status | ✅ **Done** — create a folder, drop several documents of any format, watch each index |
-| **2** | Chat + answer card + evidence panel | ✅ **Done** — folder-scoped questions, source-named citations, adjusted-location disclosure |
+| **1** | Filing library, multi-file add, fetch-by-URL, per-document job status | ✅ **Done** — create a filing, add documents by drop or URL, watch each index |
+| **2** | Chat + answer card + evidence panel | ✅ **Done** — filing-scoped questions, source-named citations, adjusted-location disclosure |
 | **2b** | Markdown page viewer + richer document error states | ⬜ **Not started** — R0e, R0f |
 | **3** | Conversations, history sidebar, decline card | 🟨 **Partial** — all of it works, on localStorage rather than Postgres (R4) |
 | **4** | Settings: providers, connection test, reindex warning | 🟨 **Partial** — reads live config and warns; not writable (R5, R7) |
 | **5** | Polish: dark mode, empty/error/loading states, keyboard paths, a11y pass | 🟨 **Partial** — themes, empty/loading/error states done; a11y audit outstanding (R10) |
 
-**Phases 1 and 2 — the graded surfaces — are complete**, now in their folder form:
-an analyst creates a folder, drops in several documents of any supported format,
-and asks the folder. Verified end to end against a live API on a folder holding two
+**Phases 1 and 2 — the graded surfaces — are complete**, now in their filing form:
+an analyst creates a filing, adds several documents of any supported format, and
+asks the filing. Verified end to end against a live API on a filing holding two
 10-Ks and two CSVs — the FY2018 question cited `3M_2018_10K` page 59 and the FY2022
 question cited `3M_2022_10K` page 33, with pages from both filings in each retrieved
 set, and a CSV question cited `table 'segments'` rather than inventing a page.

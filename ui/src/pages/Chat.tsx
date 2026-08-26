@@ -10,7 +10,7 @@ import { useUiStore } from '@/stores/ui.store'
 import { AnswerCard } from '@/components/chat/AnswerCard'
 import { Composer } from '@/components/chat/Composer'
 import { DeclineCard } from '@/components/chat/DeclineCard'
-import { FolderPicker } from '@/components/chat/FolderPicker'
+import { FilingPicker } from '@/components/chat/FilingPicker'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
 import { EvidencePanel } from '@/components/evidence/EvidencePanel'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -22,11 +22,11 @@ export function ChatPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
 
-  const { searchable: folders } = useSearchableCollections()
+  const { searchable: filings } = useSearchableCollections()
   const store = useConversationStore()
   const conversation = conversationId ? store.conversations[conversationId] : undefined
 
-  const [draftFolder, setDraftFolder] = useState<string | null>(searchParams.get('folder'))
+  const [draftFiling, setDraftFiling] = useState<string | null>(searchParams.get('filing'))
   const [busy, setBusy] = useState(false)
   const [activeEvidence, setActiveEvidence] = useState<ChatResponse | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -34,9 +34,9 @@ export function ChatPage() {
   const setEvidenceOpen = useUiStore((state) => state.setEvidenceOpen)
 
   const bottomRef = useRef<HTMLDivElement>(null)
-  // A conversation is pinned to the folder it was started in, so every
+  // A conversation is pinned to the filing it was started in, so every
   // citation in the thread stays checkable against the same set of documents.
-  const folderName = conversation?.collection ?? draftFolder
+  const filingName = conversation?.collection ?? draftFiling
   const messages = conversation?.messages ?? []
 
   // Show the most recent result unless the reader has pinned an older one.
@@ -51,11 +51,11 @@ export function ChatPage() {
   }, [messages.length, busy])
 
   const ask = async (question: string) => {
-    if (!folderName) return
+    if (!filingName) return
 
     // A conversation is created on the first question, not on arrival, so the
     // sidebar never fills with empty threads.
-    const target = conversation ?? store.create(folderName)
+    const target = conversation ?? store.create(filingName)
     if (!conversation) navigate(`/chat/${target.id}`, { replace: true })
 
     const asked: Message = {
@@ -68,7 +68,7 @@ export function ChatPage() {
     setBusy(true)
 
     try {
-      const result = await chatApi.askFolder(folderName, question)
+      const result = await chatApi.askFiling(filingName, question)
       store.appendMessage(target.id, {
         id: `m_${Date.now()}_a`,
         role: 'assistant',
@@ -103,15 +103,15 @@ export function ChatPage() {
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3 lg:pr-16">
           <div className="min-w-0 flex-1 lg:max-w-md">
-            <FolderPicker
-              folders={folders}
-              value={folderName}
+            <FilingPicker
+              filings={filings}
+              value={filingName}
               onChange={(next) => {
-                // A thread is pinned to one folder: switching starts a new one,
+                // A thread is pinned to one filing: switching starts a new one,
                 // so every citation in a thread stays checkable.
-                setDraftFolder(next)
+                setDraftFiling(next)
                 setActiveEvidence(null)
-                navigate(`/chat?folder=${encodeURIComponent(next)}`)
+                navigate(`/chat?filing=${encodeURIComponent(next)}`)
               }}
             />
           </div>
@@ -133,11 +133,11 @@ export function ChatPage() {
             {messages.length === 0 && !busy && (
               <EmptyState
                 icon={<MessageSquare className="h-5 w-5" />}
-                title={folderName ? 'Ask about this folder' : 'Choose a folder to begin'}
+                title={filingName ? 'Ask about this filing' : 'Choose a filing to begin'}
                 description={
-                  folderName
-                    ? 'Every document in the folder is searched, and the answer names the one it came from. When the evidence is not there, the assistant says so rather than guessing.'
-                    : 'Pick a folder above. A conversation stays pinned to one folder, so its citations remain checkable.'
+                  filingName
+                    ? 'Every document in this filing is searched, and the answer names the one it came from. When the evidence is not there, the assistant says so rather than guessing.'
+                    : 'Pick a filing above. A conversation stays pinned to one filing, so its citations remain checkable.'
                 }
               />
             )}
@@ -185,9 +185,9 @@ export function ChatPage() {
           <div className="mx-auto max-w-3xl">
             <Composer
               onSubmit={ask}
-              disabled={!folderName}
+              disabled={!filingName}
               busy={busy}
-              docName={folderName ?? undefined}
+              docName={filingName ?? undefined}
               showSuggestions={messages.length === 0}
             />
           </div>

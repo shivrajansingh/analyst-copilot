@@ -16,9 +16,9 @@ export interface Message {
 export interface Conversation {
   id: string
   /**
-   * The folder this thread is pinned to.
+   * The filing this thread is pinned to.
    *
-   * A thread never changes folder: switching starts a new one, so every
+   * A thread never changes filing: switching starts a new one, so every
    * citation in a thread stays checkable against the same set of documents.
    */
   collection: string
@@ -141,12 +141,13 @@ export const useConversationStore = create<ConversationState>()(
     }),
     {
       name: 'analyst-copilot.conversations',
-      // v1 pinned a thread to one filing (`doc_name`); v2 pins it to a folder.
+      // v1 pinned a thread to a single document (`doc_name`); v2 pins it to a
+      // filing, which is a set of them.
       // Without this, every thread already in a browser would read its scope as
       // undefined and render a blank row in the sidebar. The old value is
       // carried across so the history stays readable — but a thread migrated
-      // this way names a filing, not a folder, so asking in it will not resolve
-      // until the reader picks a folder, which starts a new thread anyway.
+      // this way names one document, not a filing, so asking in it will not
+      // resolve until the reader picks a filing, which starts a new thread anyway.
       version: 2,
       migrate: (persisted: unknown, from: number) => {
         if (from >= 2) return persisted as ConversationState

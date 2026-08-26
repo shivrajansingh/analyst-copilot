@@ -88,8 +88,15 @@ export interface CollectionSummary {
   updated_at: number
   document_count: number
   ready_count: number
-  /** True once at least one document is indexed; a folder need not be complete. */
+  /** True once at least one document is indexed; a filing need not be complete. */
   searchable: boolean
+  /**
+   * The embedding model this filing's indices were built with.
+   *
+   * Compare against the configured model: they differ after a model change, and
+   * every index has to be rebuilt before it can be searched again.
+   */
+  index_model: string | null
   documents: CollectionDocumentInfo[]
 }
 

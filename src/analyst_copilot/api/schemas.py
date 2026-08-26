@@ -208,6 +208,12 @@ class CollectionSummary(BaseModel):
         description="True once at least one document is indexed. A folder does "
         "not wait for its slowest member before it can answer.",
     )
+    index_model: Optional[str] = Field(
+        default=None,
+        description="The embedding model this folder's indices were built with. "
+        "Compare against the configured model: they differ after a model change, "
+        "and every index has to be rebuilt before it can be searched again.",
+    )
     documents: List[CollectionDocumentInfo] = Field(default_factory=list)
 
 

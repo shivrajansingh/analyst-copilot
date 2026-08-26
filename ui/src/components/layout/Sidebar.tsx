@@ -1,5 +1,5 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { FileStack, Folders, LogOut, MessageSquarePlus, Settings, Trash2 } from 'lucide-react'
+import { FileStack, LogOut, MessageSquarePlus, Settings, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useAuthStore } from '@/stores/auth.store'
 import { useConversationStore } from '@/stores/conversations.store'
@@ -102,7 +102,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="space-y-0.5 border-t border-line p-2">
         {[
-          { to: '/folders', icon: Folders, label: 'Folders' },
           { to: '/filings', icon: FileStack, label: 'Filings' },
           { to: '/settings', icon: Settings, label: 'Settings' },
         ].map(({ to, icon: Icon, label }) => (

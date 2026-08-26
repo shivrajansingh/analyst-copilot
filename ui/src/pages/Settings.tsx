@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { useHealth } from '@/hooks/useHealth'
-import { useFilings } from '@/hooks/useFilings'
+import { useCollections } from '@/hooks/useCollections'
 
 /**
  * Provider settings.
@@ -16,9 +16,10 @@ import { useFilings } from '@/hooks/useFilings'
  */
 export function SettingsPage() {
   const { data: health } = useHealth()
-  const { data: filings } = useFilings()
-  const indexedCount = filings?.filter((filing) => filing.vector.state === 'ready').length ?? 0
-  const embeddingModel = filings?.find((f) => f.vector.model)?.vector.model
+  const { data: filings } = useCollections()
+  // Counted across filings, because a document only exists inside one.
+  const indexedCount = filings?.reduce((total, filing) => total + filing.ready_count, 0) ?? 0
+  const embeddingModel = filings?.find((filing) => filing.index_model)?.index_model
 
   return (
     <div className="scrollbar-slim h-full overflow-y-auto">
@@ -66,7 +67,7 @@ export function SettingsPage() {
                 value={embeddingModel ?? '—'}
                 readOnly
                 mono
-                hint={`${indexedCount} filings embedded`}
+                hint={`${indexedCount} document${indexedCount === 1 ? '' : 's'} embedded`}
               />
             </div>
 
@@ -78,7 +79,8 @@ export function SettingsPage() {
                   Changing the embedding model invalidates every index.
                 </strong>{' '}
                 The same page text maps into a different vector space, so all {indexedCount}{' '}
-                embedded filings would need rebuilding before they could be searched again.
+                embedded document{indexedCount === 1 ? '' : 's'} would need rebuilding before
+                they could be searched again.
               </p>
             </div>
           </Card>

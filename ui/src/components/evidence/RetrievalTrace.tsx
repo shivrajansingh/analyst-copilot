@@ -18,7 +18,7 @@ export function RetrievalTrace({
   onOpenPage?: (hit: RetrievedPage) => void
 }) {
   if (retrieval.length === 0) return null
-  // A folder ranks pages from several documents against each other, and page 59
+  // A filing ranks pages from several documents against each other, and page 59
   // exists in all of them, so the document has to be shown alongside the page.
   const multiDocument = new Set(retrieval.map((hit) => hit.doc_name)).size > 1
   const max = Math.max(...retrieval.map((hit) => hit.fused_score), 0.0001)
@@ -30,7 +30,7 @@ export function RetrievalTrace({
       </h3>
       <p className="mb-3 text-2xs leading-relaxed text-ink-subtle">
         {multiDocument
-          ? 'Pages from across the folder, ranked against each other, best first. Open one to read it and see how each retriever scored it.'
+          ? 'Pages from across the filing, ranked against each other, best first. Open one to read it and see how each retriever scored it.'
           : 'Pages the retriever considered, best first. Open one to read it and see how each retriever scored it.'}
       </p>
 

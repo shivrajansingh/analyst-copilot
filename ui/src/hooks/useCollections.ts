@@ -17,11 +17,11 @@ export function useCollections() {
   })
 }
 
-/** Folders with at least one indexed document — the only ones `/chat` accepts. */
+/** Filings with at least one indexed document — the only ones `/chat` accepts. */
 export function useSearchableCollections() {
   const query = useCollections()
   const searchable = (query.data ?? []).filter(
-    (folder: CollectionSummary) => folder.searchable,
+    (filing: CollectionSummary) => filing.searchable,
   )
   return { ...query, searchable }
 }
@@ -97,11 +97,11 @@ export function useRemoveDocument(collection: string) {
 }
 
 /**
- * Poll a folder's jobs while any of them is still running.
+ * Poll a filing's jobs while any of them is still running.
  *
- * One job per document, so a folder of twelve filings reports which one is slow
+ * One job per document, so a filing of twelve documents reports which one is slow
  * rather than a single bar that says nothing. Polling stops once every job is
- * terminal — an idle folder costs no requests.
+ * terminal — an idle filing costs no requests.
  */
 export function useCollectionJobs(name: string | null) {
   const queryClient = useQueryClient()

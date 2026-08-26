@@ -126,13 +126,13 @@ python scripts/serve_api.py          # http://127.0.0.1:8000, interactive docs a
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/collections` | Create a folder |
-| `POST` | `/api/v1/collections/{name}/documents` | Add **many** documents to a folder at once |
+| `POST` | `/api/v1/collections` | Create a filing |
+| `POST` | `/api/v1/collections/{name}/documents` | Add **many** documents to a filing at once |
 | `GET` | `/api/v1/collections/{name}/jobs` | Indexing progress, one row per document |
 | `POST` | `/api/v1/filings` | Add a single filing (multipart upload) — returns `202` + a job to poll |
 | `GET` | `/api/v1/filings/{doc_name}/status` | `queued → parsing → embedding → saving → ready` / `failed` |
 | `GET` | `/api/v1/filings` | Filings the service can answer from |
-| `POST` | `/api/v1/chat` | Ask one question of one **folder** (or one filing) |
+| `POST` | `/api/v1/chat` | Ask one question of one **filing** (or one document) |
 | `GET` | `/api/v1/health` | Models in use, filings indexed |
 
 ```bash
@@ -140,11 +140,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat -H 'Content-Type: application/jso
   -d '{"collection": "3M multi-year", "question": "What is the FY2018 capital expenditure?"}'
 ```
 
-## Folders
+## Filings
 
-A question is rarely about one file, so documents are grouped into folders and a
-question is asked of the whole folder. Retrieval ranks pages from every indexed
-document against each other; the answer still cites exactly one document.
+A **filing** here is a named set of documents, not a single file: a question is
+rarely about one file, so a question is asked of the whole filing. Retrieval
+ranks pages from every indexed document in it against each other; the answer
+still cites exactly one document.
+
+The code calls these *collections* (`/api/v1/collections`) because "filing"
+already means a single 10-K throughout the pipeline.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/collections \
@@ -154,10 +158,10 @@ curl -X POST "http://127.0.0.1:8000/api/v1/collections/3M%20multi-year/documents
   -F "files=@filings/3M_2018_10K.htm" -F "files=@filings/3M_2022_10K.htm"
 ```
 
-The folder is mirrored on both sides: originals under `filings/{folder}/`,
-Markdown and indices under `storage/{folder}/` — one directory per folder,
-holding `markdown/`, `bm25/` and `vector_indices/`. A folder is
-searchable as soon as one document is ready. Details:
+Each filing is mirrored on both sides: originals under `filings/{name}/`,
+Markdown and indices under `storage/{name}/` — one directory per filing, holding
+`markdown/`, `bm25/` and `vector_indices/`. A filing is searchable as soon as
+one of its documents is ready. Details:
 [docs/14-collections.md](docs/14-collections.md).
 
 ## Run the UI
