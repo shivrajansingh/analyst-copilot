@@ -1,6 +1,6 @@
 # Analyst Copilot
 
-Backend for question-answering over SEC annual and quarterly filings.
+Question-answering over company filings, in whatever format the analyst has them.
 
 - **Plan (done vs remaining):** [PLAN.md](PLAN.md)
 - **Implementation docs:** [docs/README.md](docs/README.md)
@@ -8,9 +8,26 @@ Backend for question-answering over SEC annual and quarterly filings.
 
 ## What works today
 
-Parse a filing into pages, index with BM25 + embeddings, hybrid-search the right page, then ask the chat LLM. A verifier checks that cited numbers appear on that page. If evidence is weak, the system returns **not found in this filing**. `scripts/eval/score.py` grades answers against the practice key on the challenge rubric.
+Parse a document — **PDF, HTML, Word, Excel, CSV or Markdown** — into Markdown pages, index with BM25 + embeddings, hybrid-search the right page, then ask the chat LLM. A verifier finds which retrieved page actually carries the evidence and cites *that* page, or returns **not found in this filing**. `scripts/eval/score.py` grades answers against the practice key on the challenge rubric.
 
-There is an HTTP API (add filing, status, chat) but no browser UI yet, and retrieval fusion plus the evidence window have known measured problems — see [PLAN.md](PLAN.md).
+There is an HTTP API (add filing, status, chat) and a React UI in [`ui/`](ui/). The evidence window still truncates long pages — see [PLAN.md](PLAN.md).
+
+### Supported formats
+
+| Format | Extensions | Unit cited | Boundary from |
+|---|---|---|---|
+| PDF | `.pdf` | page | the file — pages are stored, not inferred |
+| HTML | `.htm` `.html` `.xhtml` | page | `page-break: always` markers |
+| Word | `.docx` | page or section | author page breaks; else headings |
+| Excel | `.xlsx` `.xlsm` | sheet | one worksheet each; row blocks if large |
+| CSV | `.csv` `.tsv` | table | the file; row blocks if large |
+| Markdown / text | `.md` `.txt` | section | whole file, chunked only if oversized |
+
+Every format is normalized to Markdown — tables stay tables, so a figure keeps
+its year column — and stored one file per page under `storage/markdown/`.
+A segment is only called a *page* when the source really has pages; a workbook
+answer cites `sheet 'Q4 Revenue'`, not `page 4`. Details:
+[docs/13-document-parsing.md](docs/13-document-parsing.md).
 
 ## Project layout
 
@@ -24,16 +41,19 @@ large-documents-llm-system/
 │   └── questions-by-doc.json # [{doc_path, questions}]
 ├── filings/
 ├── scripts/examples/
+├── ui/                       # React frontend
 ├── src/analyst_copilot/
 │   ├── config/
-│   ├── parsing/
+│   ├── parsing/              # format detection, one parser per format,
+│   │   ├── parsers/          #   all normalized to Markdown
+│   │   └── markdown_store.py #   storage/markdown/{doc}/page-001.md
 │   ├── embeddings/           # OpenAI-compatible /v1/embeddings
 │   ├── llm/                  # OpenAI-compatible /v1/chat/completions
 │   ├── retrieval/            # BM25, vector, hybrid
 │   └── services/
 │       ├── indexing/
 │       └── qa/               # Retrieve → LLM → verify / abstain
-├── storage/                  # Generated indices (gitignored)
+├── storage/                  # Generated Markdown + indices (gitignored)
 └── tests/
 ```
 
@@ -74,6 +94,8 @@ PYTHONPATH=src python scripts/index_all.py --only '3M*' --workers 4
 ```
 
 Skipping is the default, so the script is safe to re-run and safe to interrupt — completed filings are kept. Failures are retried (`--retries`, default 3) and listed at the end; re-running picks them up.
+
+> **`PARSER_VERSION` is now 4.** Version 3 indexed plain text; version 4 indexes Markdown, so every existing index is stale and the whole corpus rebuilds on the next run. `--dry-run` will report all 78 filings as `stale`.
 
 An index counts as current only if it was built by this `PARSER_VERSION`, with this `EMBEDDING_MODEL`, at this `retrieval_max_chars_per_page`. Change any of those and the affected indices are rebuilt even without `--overwrite`. `--dry-run` labels each filing `missing`, `stale` or `current` so you can see what a run would cost before starting it.
 
@@ -161,14 +183,27 @@ PYTHONPATH=src pytest
 
 ## QA pipeline
 
-1. Hybrid retrieve top pages for the selected filing.
+1. Hybrid retrieve top pages for the selected document.
 2. Prompt the chat model with those excerpts; require JSON (`answer`, `page`, `evidence_snippet`, or `not_found`).
-3. Verify: cited page must be in the retrieved set; every figure in the answer must trace back to a figure on that page, comparing significant digits so a filing printed in millions still supports an answer given in billions.
+3. Verify, **evidence first**: score every retrieved page for whether it supports the answer — figures traced by significant digits, so a filing printed in millions still supports an answer given in billions — then cite the page that actually carries the evidence. The page the model named is a hint, not the answer.
 4. Otherwise abstain: **not found in this filing**.
+
+### Flexible location, strict evidence
+
+The page number is the least reliable link in the chain: the same document paginates differently as filed HTML and as the filer's own PDF, and 15 of 62 documents in the practice corpus disagree by one or two pages between the two. So verification finds the page and reports what it did:
+
+| `location_match` | Meaning |
+|---|---|
+| `exact` | The model's page carries the evidence |
+| `adjusted` | A page within `evidence_page_tolerance` (2) does; the citation moved there |
+| `relocated` | A distant page carries the quote verbatim; the citation moved there |
+| `inferred` | The model named no page; the best-supported one was used |
+
+This does not loosen the guard against a wrong answer. An answer is still only ever attached to a page whose own text supports its figures — the change is that the system looks for that page instead of requiring the model to guess its number. Re-anchoring moves a citation; it never changes an answer.
 
 Details: [docs/09-qa-pipeline.md](docs/09-qa-pipeline.md).
 
-## Parsing strategy
+## HTML parsing strategy
 
 SEC HTML is split on `page-break-after: always` or `page-break-before: always`, matched on `<hr>`, `<p>` or `<div>`. `<hr>` accounts for 76 of the 79 filings; matching only `<p>` sent nearly the whole corpus down the fallback path. Each segment becomes one page of plain text. Only 3 filings — short 8-Ks with no page-break markers at all — fall back to fixed-size chunks.
 

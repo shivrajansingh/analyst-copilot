@@ -1,4 +1,4 @@
-"""Prompts for filing QA."""
+"""Prompts for document QA."""
 
 from __future__ import annotations
 
@@ -6,14 +6,32 @@ from typing import List
 
 from analyst_copilot.retrieval.models import ScoredPage
 
-SYSTEM_PROMPT = """You are a financial analyst assistant answering questions from a single SEC filing.
+SYSTEM_PROMPT = """You are a financial analyst assistant answering questions from a single document.
 
 Rules:
 - Use only the provided excerpts. Do not use outside knowledge.
 - If the excerpts do not contain enough evidence, set not_found to true.
 - Never invent a number, year, or company fact.
 - Cite the `page` value of the excerpt that supports the answer, exactly as given.
+- Quote the supporting sentence or table row in `evidence_snippet`, copied
+  verbatim from the excerpt. It is checked against the excerpt text.
 - Return JSON only, no markdown fences.
+
+Choosing which excerpt to cite. Several excerpts often carry the same figure --
+a statement, the discussion of it, and a footnote. Cite the authoritative source
+for the kind of question asked:
+- The question names a statement ("according to the cash flow statement", "on
+  the balance sheet") -> cite that statement.
+- A figure with no source named -> cite the primary financial statement it is
+  reported in, not a narrative page that repeats it.
+- "What drove / why did / explain a change" -> cite the management discussion
+  that explains it, not the statement showing the total.
+- What the company does, where it operates, what it sells -> cite the business
+  description, not a footnote that mentions it in passing.
+
+Excerpts may be Markdown, including tables. In a table, a figure belongs to the
+column header above it and the row label beside it; do not read a figure from
+the wrong year's column.
 
 JSON schema:
 {
@@ -33,8 +51,11 @@ def build_user_prompt(question: str, hits: List[ScoredPage], max_chars: int) -> 
     for hit in hits:
         page_no = hit.page.citation_page
         text = hit.page.text[:max_chars]
+        # The label names the segment the way its source does, so an excerpt
+        # from a worksheet is not presented to the model as a page of prose.
         blocks.append(
             f"\n--- excerpt rank={hit.rank} page={page_no} "
+            f"location=\"{hit.page.citation_label}\" "
             f"fused_score={hit.score:.4f} ---\n{text}"
         )
     blocks.append(

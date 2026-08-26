@@ -39,8 +39,8 @@ async def add_filing(
     Uploading a filing that is already being indexed joins the job in flight
     rather than embedding it twice.
     """
-    doc_name = filings.validate_upload(file)
-    source_path = await filings.store_upload(file, doc_name)
+    doc_name, suffix = filings.validate_upload(file)
+    source_path = await filings.store_upload(file, doc_name, suffix)
     job = filings.submit(doc_name, source_path)
     return IndexingJobResponse.from_job(job)
 

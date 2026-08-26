@@ -2,10 +2,16 @@ from analyst_copilot.parsing.models import Page
 from analyst_copilot.retrieval.models import ScoredPage
 from analyst_copilot.services.qa.models import LLMExtraction
 from analyst_copilot.services.qa.parser import parse_llm_extraction
-from analyst_copilot.services.qa.verifier import AnswerVerifier
+from analyst_copilot.services.qa.verifier import AnswerVerifier, LocationMatch
 
 
-def _hit(page_index: int, printed_page: int, text: str, score: float = 1.0) -> ScoredPage:
+def _hit(
+    page_index: int,
+    printed_page: int,
+    text: str,
+    score: float = 1.0,
+    rank: int = 1,
+) -> ScoredPage:
     return ScoredPage(
         page=Page(
             doc_name="3M_2018_10K",
@@ -14,7 +20,7 @@ def _hit(page_index: int, printed_page: int, text: str, score: float = 1.0) -> S
             printed_page=printed_page,
         ),
         score=score,
-        rank=1,
+        rank=rank,
     )
 
 
@@ -65,21 +71,74 @@ def test_verifier_rejects_number_missing_from_page():
     assert result.reason == "number_not_on_page"
 
 
-def test_verifier_ignores_printed_page_when_resolving_citation():
-    """Footer numbers are unreliable, so citing one must not resolve a hit."""
+def test_verifier_cites_the_index_not_the_printed_page_the_model_named():
+    """
+    The model quoted the footer number; the evidence is one segment away.
+
+    The citation must land on the page index that actually carries the
+    evidence, never on the footer number the model echoed -- and the shift is
+    reported rather than hidden.
+    """
     hits = [_hit(59, 60, "Purchases of property, plant and equipment (PP&E) (1,577)")]
     extraction = LLMExtraction(not_found=False, answer="$1,577 million", page=60)
     result = AnswerVerifier().verify(extraction, hits)
-    assert result.ok is False
-    assert result.reason == "page_not_in_retrieval"
+    assert result.ok is True
+    assert result.page == 59
+    assert result.cited_page == 60
+    assert result.location_match is LocationMatch.ADJUSTED
+    assert result.page_shift == 1
+    assert result.relocated is True
 
 
-def test_verifier_rejects_uncited_page():
+def test_verifier_rejects_a_loose_number_match_far_from_the_cited_page():
+    """Figures alone, sixty pages from the citation, are coincidence not evidence."""
     hits = [_hit(0, 10, "Purchases of property (1,577)")]
     extraction = LLMExtraction(not_found=False, answer="$1,577", page=60)
     result = AnswerVerifier().verify(extraction, hits)
     assert result.ok is False
-    assert result.reason == "page_not_in_retrieval"
+    assert result.reason == "evidence_too_far_from_citation"
+
+
+def test_verifier_relocates_a_distant_citation_when_the_quote_is_verbatim():
+    """Quoted evidence found word for word outweighs a wrong page number."""
+    page_text = "Purchases of property, plant and equipment (PP&E) (1,577) (1,373) (1,420)"
+    hits = [_hit(59, 60, page_text)]
+    extraction = LLMExtraction(
+        not_found=False,
+        answer="$1,577 million",
+        page=12,
+        evidence_snippet="Purchases of property, plant and equipment (PP&E) (1,577)",
+    )
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is True
+    assert result.page == 59
+    assert result.location_match is LocationMatch.RELOCATED
+
+
+def test_verifier_prefers_the_page_that_carries_the_quote_over_one_with_the_bare_figure():
+    """Two pages hold the figure; only one holds the evidence. Cite that one."""
+    hits = [
+        _hit(20, 21, "Segment discussion mentions 1,577 in passing.", rank=1),
+        _hit(59, 60, "Purchases of property, plant and equipment (PP&E) (1,577)", rank=2),
+    ]
+    extraction = LLMExtraction(
+        not_found=False,
+        answer="$1,577 million",
+        page=58,
+        evidence_snippet="Purchases of property, plant and equipment (PP&E) (1,577)",
+    )
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is True
+    assert result.page == 59
+
+
+def test_verifier_rejects_a_wrong_figure_even_on_the_page_the_model_cited():
+    """Correct page number, wrong evidence: still a reject."""
+    hits = [_hit(59, 60, "Purchases of property, plant and equipment (PP&E) (1,577)")]
+    extraction = LLMExtraction(not_found=False, answer="$9,999 million", page=59)
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "number_not_on_page"
 
 
 def test_qa_service_abstains_when_model_not_found():

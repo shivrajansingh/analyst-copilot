@@ -20,6 +20,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from analyst_copilot.config.settings import PROJECT_ROOT, get_settings
+from analyst_copilot.parsing.formats import SUPPORTED_SUFFIXES
 
 
 class ApiSettings(BaseSettings):
@@ -46,10 +47,14 @@ class ApiSettings(BaseSettings):
     # A browser UI is served from a different origin during development.
     cors_origins: List[str] = Field(default_factory=lambda: ["*"])
 
-    # Uploads. The largest filing in the practice corpus is ~16 MB.
-    max_upload_bytes: int = 32 * 1024 * 1024
+    # Uploads. The largest filing in the practice corpus is ~16 MB; a filer's
+    # own PDF of the same document runs larger, so the ceiling is generous.
+    max_upload_bytes: int = 64 * 1024 * 1024
     upload_chunk_bytes: int = 1024 * 1024
-    allowed_suffixes: Tuple[str, ...] = (".htm", ".html")
+    # Every format the parser registry can handle. Sourced from the registry
+    # rather than restated, so registering a parser is the only step needed to
+    # make its format uploadable.
+    allowed_suffixes: Tuple[str, ...] = SUPPORTED_SUFFIXES
 
     # Indexing. Embedding is network-bound, so more workers mostly means more
     # concurrent load on the embedding provider rather than more throughput.

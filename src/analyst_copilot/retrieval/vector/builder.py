@@ -7,7 +7,7 @@ from typing import Optional
 from analyst_copilot.config.settings import get_settings
 from analyst_copilot.embeddings import get_embedding_client
 from analyst_copilot.embeddings.base import EmbeddingClient
-from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
+from analyst_copilot.parsing.version import PARSER_VERSION
 from analyst_copilot.parsing.models import FilingDocument
 from analyst_copilot.retrieval.models import VectorIndexMetadata
 from analyst_copilot.retrieval.vector.index import VectorIndex

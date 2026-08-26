@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from analyst_copilot.config.settings import get_settings
-from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
+from analyst_copilot.parsing.version import PARSER_VERSION
 from analyst_copilot.retrieval.bm25.index import BM25Index
 from analyst_copilot.retrieval.models import BM25IndexMetadata
 

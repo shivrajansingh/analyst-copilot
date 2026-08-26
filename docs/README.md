@@ -7,6 +7,7 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Project setup](01-project-setup.md) | Layout, install, run tests |
 | [Configuration](02-configuration.md) | `.env`, settings, URL resolution |
 | [HTML parsing](03-html-parsing.md) | SEC HTML → pages with page numbers |
+| [Document parsing](13-document-parsing.md) | **Multi-format intake**: PDF/HTML/Word/Excel/CSV → Markdown pages |
 | [Embeddings](04-embeddings.md) | OpenAI-compatible `/v1/embeddings` |
 | [BM25 retrieval](05-bm25-retrieval.md) | Lexical index and search |
 | [Vector retrieval](06-vector-retrieval.md) | Dense page embeddings |
@@ -15,3 +16,4 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Question answering](09-qa-pipeline.md) | LLM extract + verify + abstain |
 | [Evaluation](10-evaluation.md) | Answer runners + rubric scorer (+1 / 0 / −1) |
 | [HTTP API](11-api.md) | FastAPI service: add filing, status, chat |
+| [Multi-agent retrieval](12-multi-agent-retrieval.md) | Assessment and recommendation (not implemented) |

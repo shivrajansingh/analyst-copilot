@@ -211,9 +211,10 @@ def test_add_filing_returns_202_and_indexes_in_the_background(client):
     assert "NEWCO_2024_10K" in client.indexer.indexed
 
 
-def test_add_filing_rejects_a_non_html_upload(client):
+def test_add_filing_rejects_an_unsupported_upload(client):
+    """PDF, Word, Excel and CSV are all accepted now; an image is not."""
     response = client.post(
-        f"{API}/filings", files={"file": ("notes.pdf", b"%PDF-1.4", "application/pdf")}
+        f"{API}/filings", files={"file": ("chart.png", b"\x89PNG\r\n", "image/png")}
     )
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "unsupported_file_type"

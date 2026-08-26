@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Union
 
-from analyst_copilot.parsing.html_filing_parser import parse_filing_html
+from analyst_copilot.parsing.markdown_store import MarkdownPageStore
 from analyst_copilot.parsing.models import FilingDocument
+from analyst_copilot.parsing.registry import parse_document
 from analyst_copilot.retrieval.bm25.builder import BM25IndexBuilder
 from analyst_copilot.retrieval.bm25.storage import BM25IndexStore
 from analyst_copilot.retrieval.vector.builder import VectorIndexBuilder
@@ -15,20 +16,32 @@ from analyst_copilot.services.indexing.models import FilingIndices
 
 
 class HybridFilingIndexer:
-    """Parse a filing and build both lexical and vector indices."""
+    """Parse a document of any supported format and build both indices."""
 
     def __init__(
         self,
         vector_builder: Optional[VectorIndexBuilder] = None,
         bm25_store: Optional[BM25IndexStore] = None,
         vector_store: Optional[VectorIndexStore] = None,
+        markdown_store: Optional[MarkdownPageStore] = None,
     ) -> None:
         self._vector_builder = vector_builder or VectorIndexBuilder()
         self._bm25_store = bm25_store or BM25IndexStore()
         self._vector_store = vector_store or VectorIndexStore()
+        self._markdown_store = markdown_store or MarkdownPageStore()
 
     def parse(self, filing_path: Union[Path, str], doc_name: Optional[str] = None) -> FilingDocument:
-        return parse_filing_html(filing_path, doc_name=doc_name)
+        """
+        Parse any supported format into Markdown segments, and write them out.
+
+        The Markdown is persisted here rather than at save time because it is
+        the parse result, not an index artifact: a run that fails while
+        embedding should still leave behind what the parser read, which is the
+        first thing anyone looks at when a citation is wrong.
+        """
+        document = parse_document(filing_path, doc_name=doc_name)
+        self._markdown_store.save(document)
+        return document
 
     def build_indices(self, document: FilingDocument) -> FilingIndices:
         bm25_index = BM25IndexBuilder().build(document)

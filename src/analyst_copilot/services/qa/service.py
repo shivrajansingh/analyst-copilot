@@ -15,6 +15,32 @@ from analyst_copilot.services.qa.parser import parse_llm_extraction
 from analyst_copilot.services.qa.prompts import SYSTEM_PROMPT, build_user_prompt
 from analyst_copilot.services.qa.verifier import AnswerVerifier
 
+# PDF first: its page boundaries are stored, not inferred, so a citation into it
+# is the one an analyst can check against the document the company published.
+PREFERRED_SUFFIXES = (".pdf", ".htm", ".html", ".docx", ".xlsx", ".csv", ".md", ".txt")
+
+
+def find_source_document(doc_name: str) -> Path:
+    """
+    Locate a document by name, whatever format it was added in.
+
+    A filing may have arrived as HTML, as the filer's own PDF, or as a Word
+    original, and the caller knows only the name it was stored under. Extensions
+    are tried in the order the parsers handle best, so a document present in two
+    formats is read from the one whose page boundaries are explicit.
+    """
+    settings = get_settings()
+    for suffix in PREFERRED_SUFFIXES:
+        candidate = settings.filings_dir / f"{doc_name}{suffix}"
+        if candidate.is_file():
+            return candidate
+    matches = sorted(settings.filings_dir.glob(f"{doc_name}.*"))
+    if matches:
+        return matches[0]
+    raise FileNotFoundError(
+        f"No source document named {doc_name!r} under {settings.filings_dir}."
+    )
+
 
 class QuestionAnsweringService:
     """Retrieve evidence, ask the LLM, then verify or abstain."""
@@ -77,6 +103,10 @@ class QuestionAnsweringService:
         if not verified.ok:
             return self._abstain(question, doc_name, verified.reason, search, extraction)
 
+        cited_hit = next(
+            (hit for hit in search.hits if hit.page.citation_page == verified.page),
+            None,
+        )
         return QAAnswer(
             question=question,
             doc_name=doc_name,
@@ -86,6 +116,11 @@ class QuestionAnsweringService:
             evidence_snippet=verified.evidence_snippet,
             retrieval=search,
             llm_extraction=extraction,
+            location_match=verified.location_match.value if verified.location_match else None,
+            cited_page=verified.cited_page,
+            page_shift=verified.page_shift,
+            location_label=cited_hit.page.citation_label if cited_hit else None,
+            segment_kind=cited_hit.page.segment_kind if cited_hit else None,
         )
 
     def _load_or_build(
@@ -96,8 +131,7 @@ class QuestionAnsweringService:
         if self._indexer.indices_exist(doc_name):
             return self._indexer.load_indices(doc_name)
         if filing_path is None:
-            settings = get_settings()
-            filing_path = settings.filings_dir / f"{doc_name}.htm"
+            filing_path = find_source_document(doc_name)
         return self._indexer.index_filing(filing_path, doc_name=doc_name, save=True)
 
     def _abstain(

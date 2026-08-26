@@ -9,8 +9,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from analyst_copilot.config.settings import get_settings
-from analyst_copilot.parsing.html_filing_parser import PARSER_VERSION
-from analyst_copilot.parsing.models import Page
+from analyst_copilot.parsing.version import PARSER_VERSION
+from analyst_copilot.parsing.formats import DocumentFormat
+from analyst_copilot.parsing.models import Page, SegmentKind
 from analyst_copilot.retrieval.models import VectorIndexMetadata
 from analyst_copilot.retrieval.vector.index import VectorIndex
 
@@ -186,6 +187,12 @@ class VectorIndexStore:
                 "page_index": page.page_index,
                 "printed_page": page.printed_page,
                 "text": page.text,
+                # What the segment is and what to call it travel with the text:
+                # a citation into a workbook has to read "sheet 'Q4 Revenue'"
+                # when it is served from the index, not just when it is parsed.
+                "segment_kind": page.segment_kind.value,
+                "segment_label": page.segment_label,
+                "source_format": page.source_format.value,
             }
             for page in pages
         ]
@@ -198,6 +205,11 @@ class VectorIndexStore:
                 page_index=item["page_index"],
                 text=item["text"],
                 printed_page=item.get("printed_page"),
+                # Indices written before segments carried a kind hold pages, so
+                # the defaults reproduce what those files meant.
+                segment_kind=SegmentKind(item.get("segment_kind", "page")),
+                segment_label=item.get("segment_label"),
+                source_format=DocumentFormat(item.get("source_format", "html")),
             )
             for item in payload
         ]

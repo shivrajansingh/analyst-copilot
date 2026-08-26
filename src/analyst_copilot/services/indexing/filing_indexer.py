@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Union
 
-from analyst_copilot.parsing.html_filing_parser import parse_filing_html
+from analyst_copilot.parsing.registry import parse_document
 from analyst_copilot.parsing.models import FilingDocument
 from analyst_copilot.retrieval.bm25.builder import BM25IndexBuilder
 from analyst_copilot.retrieval.bm25.index import BM25Index
@@ -24,7 +24,7 @@ class FilingIndexer:
         self._store = store or BM25IndexStore()
 
     def parse(self, filing_path: Union[Path, str], doc_name: Optional[str] = None) -> FilingDocument:
-        return parse_filing_html(filing_path, doc_name=doc_name)
+        return parse_document(filing_path, doc_name=doc_name)
 
     def build_index(self, document: FilingDocument) -> BM25Index:
         return self._builder.build(document)

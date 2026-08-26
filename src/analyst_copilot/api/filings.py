@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import UploadFile
 
@@ -26,6 +26,7 @@ from analyst_copilot.api.schemas import (
     IndexState,
     PageResponse,
 )
+from analyst_copilot.parsing.markdown_store import MarkdownPageStore
 from analyst_copilot.retrieval.bm25.storage import BM25IndexStore
 from analyst_copilot.retrieval.vector.storage import VectorIndexStore
 from analyst_copilot.services.indexing import HybridFilingIndexer
@@ -64,26 +65,40 @@ class FilingService:
         jobs: IndexingJobManager,
         bm25_store: Optional[BM25IndexStore] = None,
         vector_store: Optional[VectorIndexStore] = None,
+        markdown_store: Optional[MarkdownPageStore] = None,
     ) -> None:
         self._settings = settings
         self._indexer = indexer
         self._jobs = jobs
+        self._markdown_store = markdown_store or MarkdownPageStore()
         # Read straight from the stores: the library needs metadata for every
         # filing at once, and going through the indexer would load each index.
         self._bm25_store = bm25_store or BM25IndexStore()
         self._vector_store = vector_store or VectorIndexStore()
 
     # -- intake ----------------------------------------------------------- #
-    def validate_upload(self, upload: UploadFile) -> str:
+    def validate_upload(self, upload: UploadFile) -> Tuple[str, str]:
+        """
+        Check the extension and derive the storage name.
+
+        Returns the document name and the suffix to store the bytes under: the
+        suffix has to survive intake, because it is what tells the parser
+        registry which format arrived.
+        """
         suffix = Path(upload.filename or "").suffix.lower()
         if suffix not in self._settings.allowed_suffixes:
             allowed = ", ".join(self._settings.allowed_suffixes)
             raise UnsupportedFileType(
                 f"Unsupported file type {suffix or '(none)'}. Allowed: {allowed}."
             )
-        return sanitize_doc_name(upload.filename)
+        return sanitize_doc_name(upload.filename), suffix
 
-    async def store_upload(self, upload: UploadFile, doc_name: str) -> Path:
+    async def store_upload(
+        self,
+        upload: UploadFile,
+        doc_name: str,
+        suffix: str = ".htm",
+    ) -> Path:
         """
         Stream the upload to disk, enforcing the size limit as it arrives.
 
@@ -92,8 +107,8 @@ class FilingService:
         """
         target_dir = self._settings.upload_dir
         target_dir.mkdir(parents=True, exist_ok=True)
-        destination = target_dir / f"{doc_name}.htm"
-        partial = destination.with_suffix(".htm.part")
+        destination = target_dir / f"{doc_name}{suffix}"
+        partial = destination.with_name(f"{destination.name}.part")
 
         written = 0
         try:
@@ -230,6 +245,7 @@ class FilingService:
 
         metadata = self._vector_store.load_metadata(doc_name)
         cap = metadata.max_chars_per_page if metadata else len(match.text)
+        manifest = self._markdown_store.load_manifest(doc_name)
         return PageResponse(
             doc_name=doc_name,
             page=match.page_index,
@@ -239,6 +255,15 @@ class FilingService:
             char_count=len(match.text),
             embedded_chars=min(cap, len(match.text)),
             truncated=len(match.text) > cap,
+            label=match.citation_label,
+            segment_kind=match.segment_kind.value,
+            source_format=manifest.source_format.value if manifest else None,
+            # The indexed text and the stored Markdown come from the same parse,
+            # so they normally agree. Both are returned because they can drift:
+            # an index built before a parser change still answers questions from
+            # the text it holds, and a reader needs to see that text, not the
+            # Markdown a later parse would produce.
+            markdown=self._markdown_store.load_markdown(doc_name, match.page_index),
         )
 
     def list_known(self) -> List[str]:

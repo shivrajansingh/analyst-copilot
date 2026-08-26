@@ -1,7 +1,9 @@
 # Analyst Copilot — Frontend Plan
 
-**Status:** the React app is built and running against the live API. The
-persistence and deployment layers — Postgres, real auth, Docker Compose — are not.
+**Status:** the React app is built and running against the live API. Two gaps:
+the backend now ingests PDF, Word, Excel and CSV and the UI still speaks only
+`page N` of an HTML filing (R0a-R0f); and the persistence and deployment layers
+— Postgres, real auth, Docker Compose — do not exist.
 **Scope:** a React application in `ui/`, a Postgres-backed API, and a Docker Compose
 stack that runs the whole product.
 
@@ -44,6 +46,12 @@ Ordered by what blocks what.
 
 | # | Work | Blocks |
 |---|---|---|
+| **R0a** | **Multi-format upload**: accept PDF / Word / Excel / CSV / Markdown alongside HTML in the dropzone; per-type icons, per-type size limits, client-side sniffing so a mislabelled file is caught before it is sent. Backend already accepts all of them | The library and chat screens for anything but HTML |
+| **R0b** | **Format-aware processing status**: the job feed now has a `parsing` phase worth showing — a 160-page PDF takes ~57s to parse before embedding even starts. Show the phase, the format, and the segment count as it is discovered | Honest progress on non-HTML uploads |
+| **R0c** | **Non-page citations**: render `sheet 'Q4 Revenue'` and `rows 402-601` wherever the UI currently hardcodes `page N`. A workbook has no page 4 | Excel/CSV answers being citable at all |
+| **R0d** | **Adjusted-location disclosure**: when the verifier moves a citation onto the page that actually carries the evidence, say so in the evidence panel rather than silently showing a different number than the model produced | Trust in the flexible-location behaviour |
+| **R0e** | **Markdown page viewer**: the page viewer shows the stored Markdown, tables rendered as tables. `GET /filings/{doc}/pages/{n}` already returns it | Spot-checking a bad citation |
+| **R0f** | **Unsupported / failed document states**: distinguish "we do not parse this type", "this file is corrupt", and "parsing produced nothing" — three different user actions | Error handling on the upload path |
 | **R1** | **Docker Compose**: `db`, `migrate`, `api`, `ui` (nginx). Mount `filings/` and `storage/` per §12 Q3 | Everything below; also the live session |
 | **R2** | **Postgres + SQLAlchemy 2.0 + Alembic**, schema per §8 | R3–R6 |
 | **R3** | **Real auth**: `/auth/login`, `/auth/me`, `/auth/logout`; bcrypt, JWT, seeded demo user. Multi-user per §12 Q1 | Replaces the localStorage session |
@@ -217,22 +225,35 @@ them — a reviewer must never be blocked at the door.
 ┌──────────────────────────────────────────────────────────────────────┐
 │  Filings                                    [ ⬆ Add filing ]         │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │  ⬆  Drop a 10-K / 10-Q here, or click to browse (.htm, ≤32MB)  │  │
+│  │  ⬆  Drop a document here, or browse                            │  │
+│  │     PDF · HTML · Word · Excel · CSV · Markdown   (≤64MB)        │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
-│  ▶ NEWCO_2024_10K   embedding…  ███████████░░░░░  4:12 / 10:00       │
+│  ▶ NEWCO_2024_10K  📕 pdf  parsing… 118/190 pages   0:41 / 10:00     │
 │                                                                      │
 │  [All 78] [Ready 76] [Partial 1] [Failed 1]        🔍 [ search   ]   │
-│  ┌──────────────────┬───────┬─────────┬────────────┬──────────────┐  │
-│  │ Filing           │ Pages │ BM25    │ Embeddings │              │  │
-│  ├──────────────────┼───────┼─────────┼────────────┼──────────────┤  │
-│  │ 3M_2018_10K      │  134  │ ● ready │ ● ready    │  Chat  ⋯     │  │
-│  │ 3M_2022_10K      │  131  │ ● ready │ ● ready    │  Chat  ⋯     │  │
-│  │ AMCOR_2020_10K   │  122  │ ● ready │ ○ missing  │  Reindex ⋯   │  │
-│  │ BROKEN_10K       │   —   │ ○ —     │ ✕ failed   │  Retry  ⋯    │  │
-│  └──────────────────┴───────┴─────────┴────────────┴──────────────┘  │
+│  ┌───────────────────┬──────┬───────┬─────────┬────────────┬───────┐ │
+│  │ Document          │ Type │ Units │ BM25    │ Embeddings │       │ │
+│  ├───────────────────┼──────┼───────┼─────────┼────────────┼───────┤ │
+│  │ 3M_2018_10K       │ 📕pdf│ 160 p │ ● ready │ ● ready    │ Chat ⋯│ │
+│  │ 3M_2022_10K       │ 🌐htm│ 131 p │ ● ready │ ● ready    │ Chat ⋯│ │
+│  │ segment_data      │ 📗xls│ 4 sh  │ ● ready │ ● ready    │ Chat ⋯│ │
+│  │ AMCOR_2020_10K    │ 🌐htm│ 122 p │ ● ready │ ○ missing  │ Reix ⋯│ │
+│  │ BROKEN_10K        │ 📕pdf│   —   │ ○ —     │ ✕ failed   │ Retry⋯│ │
+│  └───────────────────┴──────┴───────┴─────────┴────────────┴───────┘ │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+**"Units", not "Pages".** The column counts what the document actually has:
+`160 p` for a PDF, `4 sh` for a workbook, `12 pt` for a Word file with no author
+page breaks. A workbook does not have 4 pages and the table must not claim it
+does — the same rule that governs citations governs the library.
+
+**Type is shown because it changes what a citation means.** Two copies of the
+same 10-K, one HTML and one PDF, paginate differently: measured across the
+practice corpus, 15 of 62 documents disagree by one or two pages between the
+filed HTML and the filer's own PDF. An analyst comparing a citation against
+their own copy needs to know which reading they are looking at.
 
 **BM25 and embeddings are shown as two independent badges**, because they genuinely
 are two independent artefacts on disk and they fail independently — BM25 is local and
@@ -284,6 +305,37 @@ API keys are write-only: submitted in full, returned masked, never re-displayed.
 Evidence gets four distinct treatments, escalating with how much the analyst wants
 to interrogate the answer. This is deliberately *not* "a link under the text".
 
+### 5.0 Locations are named the way their source names them
+
+Every surface that shows a location reads it from the API's `evidence.label`
+rather than formatting `page N` itself. The backend already returns
+`sheet 'Q4 Revenue'` for a workbook and `rows 402-601` for a block of CSV rows,
+and `evidence.segment_kind` says which kind it is. A component that hardcodes
+"page" is a bug on any non-paginated document.
+
+### 5.0.1 When the citation moved, say so
+
+The verifier is **evidence-first**: it finds which retrieved page actually
+carries the evidence and cites that one, treating the page the model named as a
+hint. `evidence.location_match` reports what happened:
+
+| Value | Meaning | UI treatment |
+|---|---|---|
+| `exact` | The model's page carries the evidence | Nothing. This is the normal case |
+| `adjusted` | A neighbouring page does; the citation moved there | Quiet note under the citation: *"located on page 60 — the model cited 61"* |
+| `relocated` | A distant page carries it, word for word | Same note, and the retrieval trace marks both pages |
+| `inferred` | The model named no page; the best-supported one was used | Same note, worded as *"page inferred from the evidence"* |
+
+This is a disclosure, not a warning. Nothing is wrong when a citation is
+adjusted — the same document paginates differently as filed HTML and as the
+filer's own PDF, and the system is landing on the page that actually holds the
+proof. But an analyst who sees the answer say page 60 while the reasoning said
+61 must be able to find out why in one glance, or the discrepancy reads as a
+bug. `page_shift` carries the distance; `model_cited_page` carries the original.
+
+**Do not** style this as an error, and do not hide it behind a tooltip. It goes
+in the evidence panel as plain text at normal weight.
+
 **1. Citation chip** — inline in the answer, monospace, clickable:
 `▸ 3M_2018_10K · p.60`. Hover previews the snippet; click opens the panel.
 
@@ -333,6 +385,100 @@ lazy — the analyst can see the system looked, and where.
 
 ---
 
+## 5A. The document-processing workflow
+
+Every uploaded document takes the same path, whatever it is. The UI's job is to
+make each step legible, and to fail in a way that tells the analyst what to do.
+
+```text
+  upload ─→ detect ─→ parse ─→ Markdown ─→ segment ─→ store ─→ embed ─→ ready
+             │         │                     │                  │
+             │         │                     │                  └─ "embedding 84/160"
+             │         │                     └─ "160 pages" / "4 sheets"
+             │         └─ the slow step on PDFs: ~57s for 160 pages
+             └─ wrong type is caught here, before a byte is uploaded
+```
+
+### 5A.1 Upload
+
+The dropzone accepts **PDF, HTML, Word, Excel, CSV, Markdown and text**. Two
+checks run in the browser before anything is sent:
+
+- **Extension** against the list the API advertises. Do not hardcode it —
+  `allowed_suffixes` comes from the parser registry and grows when a parser is
+  added.
+- **Magic bytes** on the first 8 bytes via `File.slice()`. A `.pdf` that does not
+  start with `%PDF-` is rejected in the browser with a specific message, because
+  the same rejection from the server costs a 64 MB round trip first.
+
+Size cap is 64 MB — a filer's own PDF of a 10-K runs well past the 32 MB the
+HTML corpus needed.
+
+### 5A.2 Processing status
+
+The job payload already carries `status`, `elapsed_seconds`, `budget_seconds`
+and `over_budget`. What the UI adds for multi-format is **which phase, and how
+big the document turned out to be**:
+
+```text
+  ▶ NEWCO_2024_10K   📕 pdf
+
+     ✓ detected        pdf
+     ⣾ parsing         118 / 190 pages          0:41
+       embedding       —
+       ─────────────────────────────────────────────
+       ████████░░░░░░░░░░░░░░░░  0:41 / 10:00
+```
+
+Parsing deserves its own line because on a PDF it is no longer instant. A
+160-page 10-K takes ~57s to parse before embedding starts, and a progress bar
+that sits at zero for a minute reads as a hang. The segment count is not known
+until parsing begins, so the total appears mid-flight — show `— pages` until it
+does rather than guessing.
+
+Phase names come from `JobStatus`: `queued → parsing → embedding → saving →
+ready | failed`.
+
+### 5A.3 Page-level Markdown, visible
+
+Parsing writes one Markdown file per segment under
+`storage/markdown/{doc}/page-001.md`, and `GET /filings/{doc}/pages/{n}` returns
+it as `markdown` alongside the indexed `text`.
+
+The page viewer renders the Markdown — **tables as tables**. This is the single
+highest-value debugging surface in the product: when a citation looks wrong, the
+question is always "what did the system actually read on that page", and a
+rendered financial statement answers it in one look where a wall of flattened
+prose does not.
+
+Show `label`, `segment_kind`, `source_format` and the existing `embedded_chars`
+truncation boundary in the same view.
+
+### 5A.4 Error handling
+
+Four failures, four different things for the analyst to do. Collapsing them into
+"upload failed" is the failure mode to avoid.
+
+| What happened | Where caught | Message | Action offered |
+|---|---|---|---|
+| Type we do not parse | Browser, then `415` | "PNG files aren't supported. Try PDF, HTML, Word, Excel or CSV." | List the accepted types |
+| Extension lies about contents | Browser, then `415` | "This file is named .pdf but isn't one." | Re-pick the file |
+| Too large | Browser, then `413` | "68 MB exceeds the 64 MB limit." | — |
+| Parse produced nothing | Job → `failed` | "We read the file but found no text. Scanned PDFs need OCR, which this system doesn't do." | Remove · try another copy |
+| Parser crashed | Job → `failed` with `error` | Show the real error, monospace, copyable | Retry · Remove |
+| Embedding failed | Job → `failed`, BM25 badge still `ready` | "Text search is ready; semantic search failed." | Retry embedding only |
+
+The last row matters and is easy to miss: BM25 and embeddings fail
+independently, and a document with a lexical index and no vectors is **partially
+usable**. The library already models this with two badges; the error states have
+to respect it rather than marking the whole document dead.
+
+**Scanned PDFs are the predictable support question.** There is no OCR in the
+pipeline, so an image-only PDF parses to zero characters and fails. Say that in
+the message; do not let it present as a generic parse error.
+
+---
+
 ## 6. Design language
 
 **Colour.** Neutral slate canvas, one indigo accent, semantic colours reserved for
@@ -371,6 +517,11 @@ evidence → open page.
 | `POST /chat`                          | Accept`conversation_id`; return `message_id`, `conversation_id`, `latency_ms`                     | Chat history                                                                                                  |
 | ✅ `POST /chat`                       | `retrieved_pages: int[]` → `retrieval: [{page, rank, fused_score, bm25_score, vector_score, cited}]` | The "why this page" panel.`ScoredPage` already carries these; they are dropped at the schema boundary today |
 | `POST /filings`                       | Record uploader + original filename in Postgres                                                           | Attribution in the library                                                                                    |
+| ✅ `POST /filings`                    | Accepts every format in the parser registry, not just `.htm`/`.html`; the real suffix is preserved on disk so the registry can dispatch on it | Universal upload |
+| ✅ `POST /chat`                       | `evidence` gains `label`, `segment_kind`, `location_match`, `model_cited_page`, `page_shift`             | Non-page citations, and disclosing an adjusted location (§5.0.1)                                              |
+| ✅ `GET /filings/{doc}/pages/{n}`     | Adds `markdown`, `label`, `segment_kind`, `source_format`                                                 | The Markdown page viewer (§5A.3)                                                                              |
+| `GET /filings`                        | Add `source_format` and `segment_kind` per document                                                       | The library's Type and Units columns. **Not yet shipped** — the UI cannot render §4.3 without it              |
+| `GET /filings/{doc}/status`           | Add `source_format`, `segments_parsed`, `segments_total`                                                  | The parsing phase in §5A.2 has nothing to count without it                                                    |
 
 ### 7.2 New endpoints
 
@@ -518,15 +669,22 @@ every search slower.
 | Phase | Deliverable | Status |
 |---|---|---|
 | **0** | Compose stack + Postgres + Alembic + auth | ⬜ **Not started** — R1–R3 |
-| **1** | App shell, filing library, add-filing + live job status | ✅ **Done** — upload reaches `ready`, both badges correct |
-| **2** | Chat + answer card + evidence panel | ✅ **Done** — cited answers with a page-level proof, plus the page viewer |
+| **1** | App shell, filing library, add-filing + live job status | 🟨 **Partial** — done for HTML; multi-format upload, type/units columns and the parsing phase are R0a/R0b |
+| **2** | Chat + answer card + evidence panel | 🟨 **Partial** — done for paginated documents; non-page citations and adjusted-location disclosure are R0c/R0d |
+| **2b** | Markdown page viewer + document error states | ⬜ **Not started** — R0e, R0f |
 | **3** | Conversations, history sidebar, decline card | 🟨 **Partial** — all of it works, on localStorage rather than Postgres (R4) |
 | **4** | Settings: providers, connection test, reindex warning | 🟨 **Partial** — reads live config and warns; not writable (R5, R7) |
 | **5** | Polish: dark mode, empty/error/loading states, keyboard paths, a11y pass | 🟨 **Partial** — themes, empty/loading/error states done; a11y audit outstanding (R10) |
 
-**Phases 1 and 2 — the graded surfaces — are complete.** What remains is persistence
-and deployment, which is Phase 0 arriving late: the UI was built first because it could
-be, against an API that already worked.
+**Phases 1 and 2 — the graded surfaces — work end to end for HTML filings**, which is
+the corpus the challenge ships. They regressed to partial when the backend gained
+multi-format parsing: the API now returns worksheets, row blocks and adjusted
+locations that the UI still renders as `page N`. R0a–R0f close that gap and are
+ahead of Phase 0 in priority, because they affect what an analyst sees rather than
+where it is stored.
+
+What remains after them is persistence and deployment, which is Phase 0 arriving
+late: the UI was built first because it could be, against an API that already worked.
 
 That ordering was a deliberate trade. It got the graded surfaces demonstrable early, at
 the cost of two adapters (`auth.store.ts`, `conversations.store.ts`) that will be thrown

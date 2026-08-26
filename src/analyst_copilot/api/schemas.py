@@ -113,9 +113,34 @@ class Evidence(BaseModel):
     """Where an answer came from. Present only when the system answered."""
 
     doc_name: str
-    page: int = Field(description="0-based page index within the filing.")
+    page: int = Field(description="0-based segment index within the document.")
     display_page: int = Field(description="1-based page number for humans.")
     snippet: str
+    label: str = Field(
+        default="",
+        description="How the source names this location: 'page 61', \"sheet 'Q4 Revenue'\".",
+    )
+    segment_kind: str = Field(
+        default="page",
+        description="page | sheet | table | section. Non-page kinds have no page number.",
+    )
+    location_match: str = Field(
+        default="exact",
+        description=(
+            "How this citation relates to the page the model named. `exact`: the "
+            "same page. `adjusted`/`relocated`: verification found the evidence on "
+            "this page instead and moved the citation here. `inferred`: the model "
+            "named no page."
+        ),
+    )
+    model_cited_page: Optional[int] = Field(
+        default=None,
+        description="The page the model named, when the citation was moved off it.",
+    )
+    page_shift: int = Field(
+        default=0,
+        description="Segments between the model's page and the one carrying the evidence.",
+    )
 
 
 class PageResponse(BaseModel):
@@ -136,6 +161,15 @@ class PageResponse(BaseModel):
     char_count: int
     embedded_chars: int
     truncated: bool
+    label: str = Field(default="", description="How the source names this location.")
+    segment_kind: str = Field(default="page")
+    source_format: Optional[str] = Field(
+        default=None, description="pdf | html | docx | xlsx | csv | markdown | text"
+    )
+    markdown: Optional[str] = Field(
+        default=None,
+        description="The stored Markdown for this segment, when it is on disk.",
+    )
 
 
 class ChatRequest(BaseModel):
@@ -190,6 +224,13 @@ class ChatResponse(BaseModel):
                 page=answer.page,
                 display_page=answer.page + 1,
                 snippet=answer.evidence_snippet,
+                label=answer.location_label or f"page {answer.page + 1}",
+                segment_kind=(
+                    answer.segment_kind.value if answer.segment_kind else "page"
+                ),
+                location_match=answer.location_match or "exact",
+                model_cited_page=answer.cited_page,
+                page_shift=answer.page_shift,
             )
         return cls(
             doc_name=answer.doc_name,

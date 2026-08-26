@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     qa_max_tokens: int = 4096
     not_found_message: str = "not found in this filing"
 
+    # How far a citation may be moved to land on the page that actually carries
+    # the evidence. Two readings of the same document -- filed HTML vs the
+    # filer's own PDF -- disagree by one or two pages on 15 of the 62 documents
+    # in the practice corpus, so a shift of that size is a pagination artifact
+    # rather than a wrong answer. Beyond it, the evidence must be verbatim.
+    evidence_page_tolerance: int = 2
+
     @property
     def chat_base_url(self) -> str:
         """OpenAI-compatible base URL for chat (/v1/chat/completions)."""
