@@ -73,6 +73,24 @@ with HMR on 5173). `filings/` and `storage/` are bind-mounted, so uploads and
 indices live on the host and survive the containers. Details:
 [docs/15-docker.md](docs/15-docker.md).
 
+## The corpus is not in the repository
+
+`filings/` is gitignored. It is 338 MB of 10-Ks that arrived with the challenge
+zip — input data that never changes and that no commit should carry. The
+directory is still where the code expects it (`settings.filings_dir`), and it
+doubles as the destination for documents added through the UI.
+
+**A fresh clone has to repopulate it** before the tests, `scripts/index_all.py`
+or the eval scripts will run:
+
+```bash
+unzip analyst-copilot-data.zip          # gives filings/ and practice-questions.jsonl
+```
+
+The practice key itself (`data/practice-questions.jsonl`) *is* committed — it is
+small, it is the scoring authority, and nothing in `scripts/eval/` runs without
+it.
+
 ## Setup (without Docker)
 
 ```bash
