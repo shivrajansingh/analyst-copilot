@@ -236,6 +236,21 @@ class CollectionUploadResponse(BaseModel):
     rejected: List[RejectedUpload] = Field(default_factory=list)
 
 
+class DocumentFetchRequest(BaseModel):
+    """Add a document by URL instead of uploading its bytes."""
+
+    url: str = Field(
+        min_length=8,
+        max_length=2048,
+        description="http(s) URL of the document. Private and loopback addresses are refused.",
+    )
+    doc_name: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description="Name to store it under. Defaults to the filename in the URL.",
+    )
+
+
 class ChatRequest(BaseModel):
     """
     One question, scoped to either a folder or a single document.

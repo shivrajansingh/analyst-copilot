@@ -37,7 +37,6 @@ JSON schema:
 {
   "not_found": boolean,
   "answer": string,
-  "document": string or null,
   "page": number or null,
   "evidence_snippet": string,
   "confidence": number between 0 and 1
@@ -47,11 +46,12 @@ When not_found is true, answer must be empty and page must be null.
 """
 
 MULTI_DOCUMENT_RULES = """
-The excerpts come from several documents in one folder. Two extra rules:
+The excerpts come from several documents in one folder. Two extra rules, and one
+extra field:
 
-- Set `document` to the `document` value of the excerpt you cite, copied
-  exactly. Page numbers repeat across documents -- page 59 exists in all of
-  them -- so a page without a document names nothing.
+- Add `"document"` to the JSON, set to the `document` value of the excerpt you
+  cite, copied exactly. Page numbers repeat across documents -- page 59 exists
+  in all of them -- so a page without a document names nothing.
 - Documents in a folder are usually the same company across years, or related
   filings from one period. Read the fiscal year and entity in each excerpt and
   answer from the one the question asks about. Do not blend figures from two

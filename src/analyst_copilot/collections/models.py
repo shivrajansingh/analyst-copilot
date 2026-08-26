@@ -14,9 +14,13 @@ from analyst_copilot.parsing.formats import DocumentFormat
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 _MAX_NAME_LENGTH = 80
 
-# Reserved because the per-document layout already owns these names directly
-# under `storage/`, and a collection called `markdown` would collide with it.
-RESERVED_NAMES = frozenset({"markdown", "bm25_indices", "vector_indices", "collections"})
+# Folders live directly under `storage/`, alongside the per-document stores the
+# bulk CLI writes. These names are taken, so a folder cannot be created on one:
+# a collection called `markdown` would otherwise be indistinguishable from the
+# top-level Markdown store and would swallow it on delete.
+RESERVED_NAMES = frozenset(
+    {"markdown", "bm25", "bm25_indices", "vector_indices", "collections"}
+)
 
 
 class InvalidCollectionName(ValueError):

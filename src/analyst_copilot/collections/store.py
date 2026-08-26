@@ -5,16 +5,23 @@ uploaded originals, and once under `storage/` for everything derived from them.
 
     filings/{collection}/{doc}.pdf
 
-    storage/collections/{collection}/
+    storage/{collection}/
         collection.json
         markdown/{doc}/page-001.md
-        bm25_indices/{doc}/...
+        bm25/{doc}/...
         vector_indices/{doc}/...
 
-Mirroring rather than flattening keeps two properties worth having: a
-collection can be deleted, copied or inspected as one directory, and two
-collections can hold documents of the same name without colliding -- which they
-will, because `Q1` and `10-K` are what people call files.
+The folder sits directly under `storage/`, so the directory an analyst named is
+the directory on disk. Mirroring rather than flattening keeps two properties
+worth having: a collection can be deleted, copied or inspected as one
+directory, and two collections can hold documents of the same name without
+colliding -- which they will, because `Q1` and `10-K` are what people call
+files.
+
+A folder therefore shares `storage/` with the per-document stores used by the
+bulk CLI (`storage/markdown/`, `storage/bm25/`, `storage/vector_indices/`).
+Those three names are reserved so a folder can never be created on top of one;
+see `RESERVED_NAMES`.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from analyst_copilot.collections.models import (
+    RESERVED_NAMES,
     Collection,
     CollectionDocument,
     InvalidCollectionName,
@@ -52,7 +60,7 @@ class CollectionStore:
         filings_dir: Optional[Path] = None,
     ) -> None:
         settings = get_settings()
-        self._root = Path(storage_dir or settings.storage_dir) / "collections"
+        self._root = Path(storage_dir or settings.storage_dir)
         self._filings_root = Path(filings_dir or settings.filings_dir)
         self._root.mkdir(parents=True, exist_ok=True)
 
@@ -68,7 +76,7 @@ class CollectionStore:
         return MarkdownPageStore(base_dir=self.collection_dir(name) / "markdown")
 
     def bm25_store(self, name: str) -> BM25IndexStore:
-        return BM25IndexStore(base_dir=self.collection_dir(name) / "bm25_indices")
+        return BM25IndexStore(base_dir=self.collection_dir(name) / "bm25")
 
     def vector_store(self, name: str) -> VectorIndexStore:
         return VectorIndexStore(base_dir=self.collection_dir(name) / "vector_indices")
@@ -115,12 +123,19 @@ class CollectionStore:
         return (self.collection_dir(name) / _MANIFEST_FILE).exists()
 
     def list_all(self) -> List[Collection]:
+        """
+        Every folder under `storage/`.
+
+        Reserved names are skipped explicitly rather than relying on the missing
+        manifest to filter them: `storage/markdown/` is a real directory that a
+        listing walks straight into, and skipping it by name says why.
+        """
         if not self._root.is_dir():
             return []
         found = [
             self.load(path.name)
             for path in sorted(self._root.iterdir())
-            if path.is_dir()
+            if path.is_dir() and path.name.lower() not in RESERVED_NAMES
         ]
         return [collection for collection in found if collection is not None]
 

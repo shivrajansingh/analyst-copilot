@@ -19,6 +19,7 @@ from typing import List, Tuple
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from analyst_copilot.api.fetching import DEFAULT_USER_AGENT
 from analyst_copilot.config.settings import PROJECT_ROOT, get_settings
 from analyst_copilot.parsing.formats import SUPPORTED_SUFFIXES
 
@@ -55,6 +56,17 @@ class ApiSettings(BaseSettings):
     # rather than restated, so registering a parser is the only step needed to
     # make its format uploadable.
     allowed_suffixes: Tuple[str, ...] = SUPPORTED_SUFFIXES
+
+    # Fetching a document from a user-supplied URL. Private, loopback and
+    # link-local addresses are refused by default: without that, anyone who can
+    # reach the chat box can make the server read its own cloud metadata
+    # endpoint. Enable only for a deployment whose document store is internal.
+    allow_private_network_fetch: bool = False
+    fetch_timeout_seconds: int = 30
+    # Some archives refuse anonymous clients. SEC's fair-access policy wants a
+    # contact address here and answers 403 without one:
+    #   API_FETCH_USER_AGENT="Acme Research analyst@acme.com"
+    fetch_user_agent: str = DEFAULT_USER_AGENT
 
     # Indexing. Embedding is network-bound, so more workers mostly means more
     # concurrent load on the embedding provider rather than more throughput.

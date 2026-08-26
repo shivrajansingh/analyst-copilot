@@ -56,6 +56,26 @@ export function useAddDocuments() {
   })
 }
 
+export function useFetchDocument() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      name,
+      url,
+      docName,
+    }: {
+      name: string
+      url: string
+      docName?: string
+    }) => collectionsApi.fetchDocument(name, url, docName),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: collectionKeys.all })
+      queryClient.invalidateQueries({ queryKey: collectionKeys.one(variables.name) })
+      queryClient.invalidateQueries({ queryKey: collectionKeys.jobs(variables.name) })
+    },
+  })
+}
+
 export function useDeleteCollection() {
   const queryClient = useQueryClient()
   return useMutation({

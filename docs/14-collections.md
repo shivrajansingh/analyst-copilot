@@ -19,17 +19,26 @@ The folder is mirrored on both sides of the pipeline:
 ```text
 filings/{folder}/{doc}.pdf              the uploaded originals
 
-storage/collections/{folder}/
+storage/{folder}/
     collection.json                     name, timestamps, members
     markdown/{doc}/page-001.md
-    bm25_indices/{doc}/...
+    bm25/{doc}/...
     vector_indices/{doc}/...
 ```
+
+The folder sits directly under `storage/`, so the directory an analyst named is
+the directory on disk.
 
 Mirroring rather than flattening buys two things. A folder can be deleted,
 copied or inspected as one directory. And two folders can hold documents of the
 same name without colliding — which they will, because `10-K` and `Q1` are what
 people actually call files.
+
+Folders share `storage/` with the per-document stores the bulk CLI writes —
+`storage/markdown/`, `storage/bm25/`, `storage/vector_indices/`. Those names are
+reserved, so a folder can never be created on top of one: a folder called
+`markdown` would be indistinguishable from the top-level Markdown store and
+would swallow it on delete.
 
 ---
 

@@ -138,7 +138,18 @@ class AnswerVerifier:
                 reason = "evidence_not_on_any_page"
             return VerificationResult(ok=False, reason=reason, cited_page=cited)
 
+        # The `document` field exists to choose between candidates, so with only
+        # one document among them there is nothing for it to choose and it is
+        # ignored. This is not a nicety: asked for a document it was not shown,
+        # a model paraphrases the company's name, and reading that as a
+        # contradiction rejected correct answers out of single-document folders.
+        #
+        # Where several documents *were* retrieved, the name is honoured and a
+        # wrong one is still a mismatch -- that is the case the field is for.
         cited_doc = extraction.document
+        if len({support.doc_name for support in supports}) < 2:
+            cited_doc = None
+
         best = _best(supported, prefer_page=cited, prefer_doc=cited_doc)
         quote = extraction.evidence_snippet
 

@@ -15,6 +15,7 @@ from analyst_copilot.api.errors import (
     InvalidFilingName,
     UnsupportedFileType,
 )
+from analyst_copilot.api.fetching import FetchError, RemoteDocumentFetcher
 from analyst_copilot.api.filings import sanitize_doc_name
 from analyst_copilot.api.jobs import IndexingJobManager, JobStatus
 from analyst_copilot.api.schemas import (
@@ -42,11 +43,19 @@ class CollectionApiService:
         settings: ApiSettings,
         indexer: CollectionIndexer,
         jobs: IndexingJobManager,
+        fetcher: Optional[RemoteDocumentFetcher] = None,
     ) -> None:
         self._settings = settings
         self._indexer = indexer
         self._store: CollectionStore = indexer.store
         self._jobs = jobs
+        self._fetcher = fetcher or RemoteDocumentFetcher(
+            max_bytes=settings.max_upload_bytes,
+            allowed_suffixes=settings.allowed_suffixes,
+            timeout_seconds=settings.fetch_timeout_seconds,
+            allow_private_network=settings.allow_private_network_fetch,
+            user_agent=settings.fetch_user_agent,
+        )
 
     # -- lifecycle ---------------------------------------------------------- #
     def create(self, name: str, description: str = "") -> CollectionSummary:
@@ -163,6 +172,71 @@ class CollectionApiService:
             segment_kind=match.segment_kind.value,
             source_format=manifest.source_format.value if manifest else None,
             markdown=self._store.markdown_store(name).load_markdown(doc_name, page_index),
+        )
+
+    def fetch_document(
+        self,
+        name: str,
+        url: str,
+        doc_name: Optional[str] = None,
+    ) -> CollectionUploadResponse:
+        """
+        Download one document from a URL and queue it for indexing.
+
+        Reported through the same accepted/rejected shape as an upload, so the
+        UI has one code path for "a document joined this folder" regardless of
+        how it arrived. A fetch that fails is a rejection, not a 500: a URL that
+        404s or points at a JPEG is the user's input being wrong, not the
+        service breaking.
+        """
+        try:
+            collection = self._store.create(name)
+        except InvalidCollectionName as exc:
+            raise InvalidFilingName(str(exc)) from exc
+
+        requested = sanitize_doc_name(doc_name) if doc_name else None
+        try:
+            fetched = self._fetcher.fetch(
+                url,
+                destination_dir=self._store.uploads_dir(collection.name),
+                doc_name=requested,
+            )
+        except FetchError as exc:
+            return CollectionUploadResponse(
+                collection=collection.name,
+                accepted=[],
+                rejected=[RejectedUpload(filename=url, code="fetch_failed", message=str(exc))],
+            )
+
+        # The fetcher already refused anything the registry cannot parse, so a
+        # name is guaranteed to be derivable here.
+        final_name = requested or sanitize_doc_name(fetched.filename)
+        stored = fetched.path
+        if final_name != Path(fetched.filename).stem:
+            stored = fetched.path.with_name(f"{final_name}{fetched.suffix}")
+            fetched.path.replace(stored)
+
+        self._store.add_document(
+            collection.name,
+            CollectionDocument(doc_name=final_name, source_file=stored.name),
+        )
+        job = self._jobs.submit(
+            doc_name=final_name,
+            source_path=stored,
+            collection=collection.name,
+            source_format=fetched.suffix.lstrip("."),
+        )
+        logger.info(
+            "fetched %s (%d bytes) into folder %s as %s",
+            fetched.final_url,
+            fetched.bytes_written,
+            collection.name,
+            final_name,
+        )
+        return CollectionUploadResponse(
+            collection=collection.name,
+            accepted=[IndexingJobResponse.from_job(job)],
+            rejected=[],
         )
 
     def jobs(self, name: str) -> List[IndexingJobResponse]:

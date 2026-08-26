@@ -16,10 +16,12 @@ import {
   useCollections,
   useCreateCollection,
   useDeleteCollection,
+  useFetchDocument,
   useRemoveDocument,
 } from '@/hooks/useCollections'
 import { AddDocumentsDropzone } from '@/components/filings/AddDocumentsDropzone'
 import { DocumentRow } from '@/components/filings/DocumentRow'
+import { FetchByUrl } from '@/components/filings/FetchByUrl'
 import { JobProgress } from '@/components/filings/JobProgress'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -42,6 +44,7 @@ export function FoldersPage() {
   const { data: folders, isLoading, error } = useCollections()
   const createFolder = useCreateCollection()
   const addDocuments = useAddDocuments()
+  const fetchDocument = useFetchDocument()
   const deleteFolder = useDeleteCollection()
 
   const [newName, setNewName] = useState('')
@@ -57,6 +60,31 @@ export function FoldersPage() {
         folder.documents.some((doc) => doc.doc_name.toLowerCase().includes(needle)),
     )
   }, [folders, query])
+
+  /**
+   * One report for both intake paths.
+   *
+   * Uploading files and fetching a URL return the same accepted/rejected shape,
+   * and a rejected URL is reported the same way as a rejected file — the user
+   * does not care which code path refused their document, only why.
+   */
+  const reportIntake = (result: {
+    accepted: { length: number }
+    rejected: { filename: string; message: string }[]
+  }) => {
+    if (result.accepted.length > 0) {
+      toast.push({
+        tone: 'info',
+        title: `Indexing ${result.accepted.length} document${
+          result.accepted.length === 1 ? '' : 's'
+        }`,
+        detail: 'A full 10-K takes a few minutes to parse and embed.',
+      })
+    }
+    for (const reject of result.rejected) {
+      toast.push({ tone: 'error', title: `Rejected ${reject.filename}`, detail: reject.message })
+    }
+  }
 
   const onCreate = () => {
     const name = newName.trim()
@@ -177,26 +205,7 @@ export function FoldersPage() {
                 addDocuments.mutate(
                   { name: folder.name, files },
                   {
-                    onSuccess: (result) => {
-                      if (result.accepted.length > 0) {
-                        toast.push({
-                          tone: 'info',
-                          title: `Indexing ${result.accepted.length} document${
-                            result.accepted.length === 1 ? '' : 's'
-                          }`,
-                          detail: 'A full 10-K takes a few minutes to parse and embed.',
-                        })
-                      }
-                      // Partial success is normal: report what the server kept
-                      // and what it refused, rather than only the happy half.
-                      for (const reject of result.rejected) {
-                        toast.push({
-                          tone: 'error',
-                          title: `Rejected ${reject.filename}`,
-                          detail: reject.message,
-                        })
-                      }
-                    },
+                    onSuccess: reportIntake,
                     onError: (caught) =>
                       toast.push({
                         tone: 'error',
@@ -206,7 +215,22 @@ export function FoldersPage() {
                   },
                 )
               }
+              onFetch={(url, docName) =>
+                fetchDocument.mutate(
+                  { name: folder.name, url, docName },
+                  {
+                    onSuccess: reportIntake,
+                    onError: (caught: unknown) =>
+                      toast.push({
+                        tone: 'error',
+                        title: 'Could not fetch that URL',
+                        detail: caught instanceof Error ? caught.message : undefined,
+                      }),
+                  },
+                )
+              }
               uploading={addDocuments.isPending}
+              fetching={fetchDocument.isPending}
             />
           ))}
         </div>
@@ -222,7 +246,9 @@ function FolderCard({
   onAsk,
   onDelete,
   onUpload,
+  onFetch,
   uploading,
+  fetching,
 }: {
   folder: CollectionSummary
   open: boolean
@@ -230,7 +256,9 @@ function FolderCard({
   onAsk: () => void
   onDelete: () => void
   onUpload: (files: File[]) => void
+  onFetch: (url: string, docName?: string) => void
   uploading: boolean
+  fetching: boolean
 }) {
   // Poll only the folder that is open. Twelve collapsed folders polling their
   // jobs would be twelve requests a second for progress nobody is watching.
@@ -288,6 +316,8 @@ function FolderCard({
             busy={uploading}
             folderName={folder.name}
           />
+
+          <FetchByUrl onFetch={onFetch} busy={fetching} />
 
           {running.length > 0 && (
             <div className="space-y-2">

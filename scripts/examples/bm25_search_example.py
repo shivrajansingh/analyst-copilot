@@ -28,7 +28,7 @@ def main() -> None:
     indexer = FilingIndexer()
     index = indexer.index_filing(filing_path, doc_name=doc_name, save=True)
     print(f"Indexed pages: {index.metadata.page_count}")
-    print(f"Saved to:      storage/bm25_indices/{doc_name}/\n")
+    print(f"Saved to:      storage/bm25/{doc_name}/\n")
 
     searcher = BM25Searcher()
     result = searcher.search(index, CAPEX_QUERY, top_k=5)

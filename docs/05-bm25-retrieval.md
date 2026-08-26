@@ -13,7 +13,7 @@ Lexical search over page text using `rank-bm25` (`BM25Okapi`).
 | `bm25/index.py` | `BM25Index`: pages + tokenized corpus + model |
 | `bm25/builder.py` | `BM25IndexBuilder.build(FilingDocument)` |
 | `bm25/searcher.py` | `BM25Searcher.search(index, query, top_k)` |
-| `bm25/storage.py` | Save/load under `storage/bm25_indices/{doc_name}/` |
+| `bm25/storage.py` | Save/load under `storage/bm25/{doc_name}/` |
 
 Hits are `ScoredPage` objects (`retrieval/models.py`) with `page`, `score`, `rank`.
 

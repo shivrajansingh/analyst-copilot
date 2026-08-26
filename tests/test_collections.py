@@ -103,9 +103,33 @@ def test_creating_a_folder_is_idempotent(store):
 
 
 def test_a_folder_mirrors_into_storage_and_filings(store, tmp_path):
+    """The directory an analyst named is the directory on disk."""
     store.create("Boeing 2022")
-    assert (tmp_path / "storage" / "collections" / "Boeing 2022").is_dir()
+    assert (tmp_path / "storage" / "Boeing 2022").is_dir()
     assert (tmp_path / "filings" / "Boeing 2022").is_dir()
+
+
+def test_a_folder_holds_markdown_bm25_and_vector_indices(indexer, store, tmp_path):
+    indexer.index_document("Boeing 2022", _filing(tmp_path, "BA_10K", "Revenue was 66,608"))
+
+    root = tmp_path / "storage" / "Boeing 2022"
+    assert sorted(p.name for p in root.iterdir()) == [
+        "bm25",
+        "collection.json",
+        "markdown",
+        "vector_indices",
+    ]
+    assert (root / "markdown" / "BA_10K" / "manifest.json").exists()
+    assert (root / "bm25" / "BA_10K" / "metadata.json").exists()
+    assert (root / "vector_indices" / "BA_10K" / "metadata.json").exists()
+
+
+def test_the_top_level_stores_are_not_listed_as_folders(store, tmp_path):
+    """`storage/markdown/` is a real directory a listing walks straight into."""
+    for reserved in ("markdown", "bm25", "vector_indices"):
+        (tmp_path / "storage" / reserved).mkdir(parents=True, exist_ok=True)
+    store.create("Boeing 2022")
+    assert [item.name for item in store.list_all()] == ["Boeing 2022"]
 
 
 def test_missing_folder_raises_rather_than_returning_empty(store):
@@ -254,8 +278,13 @@ def test_page_tolerance_does_not_reach_into_another_document():
 
     Without this, a folder of one company's annual reports would let a citation
     drift between years -- the same line item sits at a similar page in each.
+    Two documents are retrieved here on purpose: that is the only situation in
+    which the model's `document` field carries information worth honouring.
     """
-    hits = [_hit("AMD_2015", 60, "Revenue was 3,991 million")]
+    hits = [
+        _hit("AMD_2015", 60, "Revenue was 3,991 million", rank=1),
+        _hit("AMD_2022", 5, "Discussion of headcount and facilities", rank=2),
+    ]
     extraction = LLMExtraction(
         not_found=False, answer="3,991", page=61, document="AMD_2022"
     )
@@ -279,3 +308,39 @@ def test_a_verbatim_quote_still_relocates_across_documents():
     assert result.ok is True
     assert result.doc_name == "AMD_2022"
     assert result.location_match is LocationMatch.RELOCATED
+
+
+def test_a_document_name_the_model_was_never_shown_is_ignored():
+    """
+    Regression: a single-document folder abstained with
+    `evidence_in_a_different_document`.
+
+    The model paraphrased the company's name into `document`, it matched no
+    retrieved page, and the verifier read that as a contradiction. A name for a
+    document that was never in the candidate set carries no information about
+    which page is right, so it is dropped rather than believed.
+    """
+    hits = [_hit("BOEING_2022_10K", 112, "Legal Proceedings. We are subject to various 1,234 claims.")]
+    extraction = LLMExtraction(
+        not_found=False,
+        answer="1,234 claims",
+        page=112,
+        document="The Boeing Company Form 10-K",
+    )
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is True
+    assert result.doc_name == "BOEING_2022_10K"
+
+
+def test_a_wrong_document_among_several_is_still_a_mismatch():
+    """Dropping an unknown name must not drop a name that is genuinely wrong."""
+    hits = [
+        _hit("AMD_2015", 60, "Revenue was 3,991 million", rank=1),
+        _hit("AMD_2022", 12, "Unrelated discussion of headcount", rank=2),
+    ]
+    extraction = LLMExtraction(
+        not_found=False, answer="3,991", page=61, document="AMD_2022"
+    )
+    result = AnswerVerifier().verify(extraction, hits)
+    assert result.ok is False
+    assert result.reason == "evidence_in_a_different_document"

@@ -33,7 +33,7 @@ def main() -> None:
     indices = indexer.index_filing(filing_path, doc_name=doc_name, save=True)
 
     print(f"Indexed pages: {indices.bm25_index.metadata.page_count}")
-    print(f"BM25 store:    storage/bm25_indices/{doc_name}/")
+    print(f"BM25 store:    storage/bm25/{doc_name}/")
     print(f"Vector store:  storage/vector_indices/{doc_name}/\n")
 
     result = HybridSearcher().search(

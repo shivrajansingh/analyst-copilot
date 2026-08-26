@@ -32,6 +32,19 @@ export const collectionsApi = {
     return api.upload<CollectionUploadResponse>(`${path(name)}/documents`, form)
   },
 
+  /**
+   * Add a document by URL. The server downloads it, so the browser never sees
+   * the bytes and cross-origin rules never enter into it.
+   *
+   * A URL that cannot be fetched comes back in `rejected` with a reason rather
+   * than as an error: a 404 or a JPEG is bad input, not a broken service.
+   */
+  fetchDocument: (name: string, url: string, docName?: string) =>
+    api.post<CollectionUploadResponse>(`${path(name)}/documents/fetch`, {
+      url,
+      doc_name: docName ?? null,
+    }),
+
   removeDocument: (name: string, docName: string) =>
     api.delete<void>(`${path(name)}/documents/${encodeURIComponent(docName)}`),
 

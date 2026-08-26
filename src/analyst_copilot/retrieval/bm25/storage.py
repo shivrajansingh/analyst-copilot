@@ -21,7 +21,10 @@ class BM25IndexStore:
 
     def __init__(self, base_dir: Optional[Path] = None) -> None:
         settings = get_settings()
-        root = base_dir or settings.storage_dir / "bm25_indices"
+        # `bm25`, matching the name a folder uses for the same thing. Kept in
+        # sync deliberately: an operator should not have to learn two names for
+        # one artifact depending on whether it is inside a folder.
+        root = base_dir or settings.storage_dir / "bm25"
         self._root = root
         self._root.mkdir(parents=True, exist_ok=True)
 

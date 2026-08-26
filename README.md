@@ -155,7 +155,8 @@ curl -X POST "http://127.0.0.1:8000/api/v1/collections/3M%20multi-year/documents
 ```
 
 The folder is mirrored on both sides: originals under `filings/{folder}/`,
-Markdown and indices under `storage/collections/{folder}/`. A folder is
+Markdown and indices under `storage/{folder}/` — one directory per folder,
+holding `markdown/`, `bm25/` and `vector_indices/`. A folder is
 searchable as soon as one document is ready. Details:
 [docs/14-collections.md](docs/14-collections.md).
 

@@ -33,7 +33,7 @@ print(result.top_hit.page.citation_page, result.top_hit.score)
 
 | Index | Path |
 |-------|------|
-| BM25 | `storage/bm25_indices/{doc_name}/` |
+| BM25 | `storage/bm25/{doc_name}/` |
 | Vectors | `storage/vector_indices/{doc_name}/` |
 
 `storage/` is gitignored.

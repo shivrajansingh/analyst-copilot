@@ -13,6 +13,7 @@ from analyst_copilot.api.schemas import (
     CollectionListResponse,
     CollectionSummary,
     CollectionUploadResponse,
+    DocumentFetchRequest,
     IndexingJobResponse,
     PageResponse,
 )
@@ -99,6 +100,34 @@ async def add_documents(
     decides what to do about the rejects.
     """
     return await service.add_documents(name, files)
+
+
+@router.post(
+    "/{name}/documents/fetch",
+    response_model=CollectionUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Add a document to a folder by URL",
+)
+async def fetch_document(
+    name: str,
+    request: DocumentFetchRequest,
+    service: CollectionApiService = Depends(get_collection_service),
+) -> CollectionUploadResponse:
+    """
+    Download a document from a URL and add it to the folder.
+
+    Only http(s), and only public addresses: without that guard, anyone who can
+    reach this endpoint could make the server read its own cloud metadata or
+    probe the internal network. Redirects are followed by hand and re-checked at
+    every hop.
+
+    A URL that cannot be fetched comes back as a `rejected` entry with a reason,
+    not as an error status — a 404 or a JPEG is the user's input being wrong,
+    not the service failing.
+    """
+    return await run_in_threadpool(
+        service.fetch_document, name, request.url, request.doc_name
+    )
 
 
 @router.delete(
