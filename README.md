@@ -80,8 +80,8 @@ zip — input data that never changes and that no commit should carry. The
 directory is still where the code expects it (`settings.filings_dir`), and it
 doubles as the destination for documents added through the UI.
 
-**A fresh clone has to repopulate it** before the tests, `scripts/index_all.py`
-or the eval scripts will run:
+**A fresh clone has to repopulate it** before the tests or the eval scripts
+will run:
 
 ```bash
 unzip analyst-copilot-data.zip          # gives filings/ and practice-questions.jsonl
@@ -118,30 +118,19 @@ EMBEDDING_MODEL=bge-m3
 
 Chat and embeddings use **separate** models and URLs. `OPENAI_MODEL` is not used for embeddings.
 
-## Index every filing
-
-```bash
-PYTHONPATH=src python scripts/index_all.py              # index whatever is missing (default)
-PYTHONPATH=src python scripts/index_all.py --overwrite  # re-embed every filing
-PYTHONPATH=src python scripts/index_all.py --dry-run    # show the plan, embed nothing
-PYTHONPATH=src python scripts/index_all.py --only '3M*' --workers 4
-```
-
-Skipping is the default, so the script is safe to re-run and safe to interrupt — completed filings are kept. Failures are retried (`--retries`, default 3) and listed at the end; re-running picks them up.
-
-> **`PARSER_VERSION` is now 4.** Version 3 indexed plain text; version 4 indexes Markdown, so every existing index is stale and the whole corpus rebuilds on the next run. `--dry-run` will report all 78 filings as `stale`.
-
-An index counts as current only if it was built by this `PARSER_VERSION`, with this `EMBEDDING_MODEL`, at this `retrieval_max_chars_per_page`. Change any of those and the affected indices are rebuilt even without `--overwrite`. `--dry-run` labels each filing `missing`, `stale` or `current` so you can see what a run would cost before starting it.
-
-Each run writes `storage/index-report.json` with per-filing page counts and timings, and flags any filing that exceeded the spec's 10-minute-per-filing budget.
-
 ## Ask one question (index if needed)
 
 ```bash
 python scripts/examples/ask.py filings/3M_2018_10K.htm "What is the FY2018 capital expenditure amount for 3M?"
 ```
 
-If the filing is not indexed yet, the script embeds it first, then searches and prints the answer, page, and evidence. You can also pass a stem: `3M_2018_10K`.
+If the filing is not indexed yet, the script embeds it first, then searches and
+prints the answer, page, and evidence. You can also pass a stem: `3M_2018_10K`.
+
+There is no bulk-indexing step. Every entry point indexes what it needs on
+demand — `QuestionAnsweringService` builds a document's indices the first time
+a question is asked of it, and the API does the same per upload, reporting
+progress against the spec's 10-minute budget as it goes.
 
 ## Run all questions (index each filing if needed)
 

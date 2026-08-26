@@ -161,12 +161,12 @@ treated as **absent**, not stale-but-usable, so a parser fix can never be masked
 by old embeddings on disk.
 
 It is now **4**. Version 3 indexed plain text; version 4 indexes Markdown, which
-changes the text of nearly every segment — so the whole corpus rebuilds.
+changes the text of nearly every segment — so everything indexed under 3 is
+treated as absent and rebuilt.
 
-```bash
-PYTHONPATH=src python scripts/index_all.py --dry-run   # everything reports "stale"
-PYTHONPATH=src python scripts/index_all.py
-```
+Nothing has to be run to make that happen. Indexing is on demand: the QA
+service builds a document's indices the first time a question is asked of it,
+and the API builds them per upload.
 
 ---
 

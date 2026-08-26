@@ -283,9 +283,9 @@ scope the API no longer accepts, and a button that goes nowhere is worse than no
 button. Keeping both would also have meant teaching two mental models for the
 same thing.
 
-The backend endpoints it used (`GET/POST /api/v1/filings`) still exist: they are
-the read path for documents indexed by `scripts/index_all.py`, and `POST /chat`
-still accepts a bare `doc_name`. Nothing in the UI calls them.
+The backend endpoints it used (`GET/POST /api/v1/filings`) still exist, and
+`POST /chat` still accepts a bare `doc_name` — that per-document path is what
+`scripts/eval/` measures against. Nothing in the UI calls either.
 
 **Two rules from that screen survive**, now applied to the document rows inside
 a filing:

@@ -29,7 +29,6 @@ A chatbot that answers analyst questions over one SEC filing at a time, with a *
 | Page-aligned citations | Done | Page-break split now matches `<hr>`/`<p>`/`<div>`; citations use 0-based `page_index` |
 | Index invalidation | Done | `PARSER_VERSION` stamped in index metadata; stale indices rebuild automatically |
 | Rubric scorer | Done | `scripts/eval/score.py` grades +1 / 0 / −1 against the practice key |
-| Bulk indexing | Done | `scripts/index_all.py` — skip-existing or `--overwrite`, retries, timing report |
 
 Docs for completed work live in [`docs/`](docs/README.md).
 

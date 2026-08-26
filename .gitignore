@@ -13,6 +13,9 @@ __pycache__/
 dist/
 build/
 .venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # ---------------------------------------------------------------------------
 # Data, not code
