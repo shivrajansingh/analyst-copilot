@@ -4,6 +4,14 @@
 
 Finds pages containing the words you searched for. Uses `rank-bm25`.
 
+```mermaid
+flowchart LR
+    Q([question]) --> T["split into words<br/>lowercase, 1,577 → 1577"]
+    T --> S[score every page]
+    P[("every page of<br/>the document")] --> S
+    S --> R([pages, best first])
+```
+
 ## Parts
 
 | File | Job |

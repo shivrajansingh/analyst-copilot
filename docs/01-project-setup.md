@@ -1,5 +1,14 @@
 # Project setup
 
+```mermaid
+flowchart LR
+    A[clone] --> B["python -m venv .venv<br/>pip install -r requirements.txt"]
+    B --> C["cp .env.example .env<br/>add your provider keys"]
+    C --> D["unzip the data<br/>gives you filings/"]
+    D --> E["pytest<br/>281 tests, all offline"]
+    E --> F["docker compose up --build<br/>the app on :4006"]
+```
+
 ## What is where
 
 ```text

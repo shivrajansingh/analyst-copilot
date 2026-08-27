@@ -5,6 +5,22 @@ change fixed, and what happened to the score.
 
 Start here, then follow the links.
 
+```mermaid
+flowchart TD
+    M([message]) --> P["1 · PLANNER<br/>what does this need?"]
+    P -->|not a question| C([reply])
+    P -->|about the file list| F([answer from the list])
+    P -->|a real question| T1["TIER 1 · search + answer"]
+    T1 --> T2["3 · TIER 2 · checker"]
+    T2 -->|correct| OK([answer + page])
+    T2 -->|doubted| T3
+    T1 -->|nothing| T3
+    T3["2 · TIER 3 · read every page<br/>5 · partials combined"]
+    T3 --> V["4 · verify, including computed answers"]
+    V --> OK
+    V --> NO([not found in this filing])
+```
+
 ---
 
 ## Where it started

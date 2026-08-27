@@ -35,10 +35,16 @@ the reader agents and the planner depend on it.
 **Chat and embeddings are separate models.** `OPENAI_MODEL` is never used for
 embeddings.
 
-If you leave `EMBEDDING_*` unset, the URL is worked out in this order:
+If you leave `EMBEDDING_*` unset, the URL is worked out in order:
 
-```
-EMBEDDING_BASE_URL  →  {OLLAMA_URL}/v1  →  OPENAI_URL stripped back to /v1
+```mermaid
+flowchart TD
+    S{EMBEDDING_BASE_URL set?} -->|yes| U1([use it])
+    S -->|no| O{OLLAMA_URL set?}
+    O -->|yes| U2(["use {host}/v1"])
+    O -->|no| P{OPENAI_URL set?}
+    P -->|yes| U3(["use it, stripped back to /v1"])
+    P -->|no| U4([localhost:11434/v1])
 ```
 
 ⚠️ **Changing the embedding model invalidates every index.** The same page text

@@ -5,6 +5,16 @@
 Turns each page into a vector, turns your question into a vector, and finds the
 closest pages. Good at questions that share no words with the answer.
 
+```mermaid
+flowchart LR
+    subgraph "once, at index time"
+      P[("each page")] --> C1["cut to 2,500 characters"] --> E1[embed] --> V[("vectors.npz")]
+    end
+    Q([question]) --> E2[embed] --> SIM[cosine similarity]
+    V --> SIM
+    SIM --> R([pages, closest first])
+```
+
 ## Parts
 
 | File | Job |

@@ -5,6 +5,13 @@
 One client, talking to any OpenAI-compatible `/v1/embeddings` endpoint. That
 covers OpenAI, OpenRouter, a local Ollama at `{host}/v1`, and most others.
 
+```mermaid
+flowchart LR
+    T[("page texts<br/>or one question")] --> B["batch them, 32 at a time"]
+    B --> API["POST /v1/embeddings"]
+    API --> V([vectors])
+```
+
 ## Parts
 
 | Thing | Job |
