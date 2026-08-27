@@ -104,6 +104,32 @@ export interface AnswerPart {
   inputs: EvidenceInput[]
 }
 
+/**
+ * One thing the harness did, from POST /chat/stream.
+ *
+ * Finer-grained than a stage: which agent is running, what it said it was about
+ * to look for, which tool it called. There are hundreds of these where there are
+ * a handful of stages, which is why they are a separate event — a client can
+ * take the milestones and ignore the firehose.
+ *
+ * Tool arguments and results are deliberately absent. A tool result is document
+ * text that has not been verified, and putting it on screen would leak exactly
+ * the unverified figures the product withholds.
+ */
+export interface TraceEvent {
+  kind: 'thought' | 'tool' | 'agent'
+  /** "reader 7", "synthesis", "checker". Absent at the top level. */
+  agent?: string
+  /** The model's own words. Only on `thought`. */
+  text?: string
+  /** Tool name only. Only on `tool`. */
+  tool?: string
+  /** Only on `agent`. */
+  status?: 'running' | 'found' | 'partial' | 'empty' | 'failed'
+}
+
+export type AgentStatus = NonNullable<TraceEvent['status']>
+
 /** A progress milestone from POST /chat/stream. */
 export interface StageEvent {
   stage:

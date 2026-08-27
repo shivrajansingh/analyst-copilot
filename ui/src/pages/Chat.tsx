@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, MessageSquare, PanelRightClose, PanelRightOpen } from 'lucide-react'
-import type { ChatResponse, StageEvent } from '@/api/types'
+import type { ChatResponse, StageEvent, TraceEvent } from '@/api/types'
 import { ApiError } from '@/api/client'
 import { chatApi } from '@/api/endpoints/chat'
 import { useSearchableCollections } from '@/hooks/useCollections'
@@ -19,6 +19,14 @@ import { Sheet } from '@/components/ui/Sheet'
 import { cn } from '@/lib/cn'
 import { truncateTitle } from '@/lib/format'
 
+/**
+ * How many trace steps are kept.
+ *
+ * A 31-reader run emits several hundred. The panel is a tail, not an archive,
+ * and holding every step of every answer in memory buys nothing a reader wants.
+ */
+const MAX_TRACES = 400
+
 export function ChatPage() {
   const { conversationId } = useParams()
   const [searchParams] = useSearchParams()
@@ -33,6 +41,12 @@ export function ChatPage() {
   // The live stage from the streaming endpoint. Reading a whole filing takes a
   // minute, and a minute of silence reads as a hang.
   const [stage, setStage] = useState<StageEvent | null>(null)
+  // The activity underneath it. Bounded: a 31-reader run emits hundreds of
+  // steps and the panel only ever shows the tail.
+  const [traces, setTraces] = useState<TraceEvent[]>([])
+  // The answer whose text should animate in — the one that just arrived, never
+  // a message re-rendered from history.
+  const [revealId, setRevealId] = useState<string | null>(null)
   const [threadError, setThreadError] = useState<string | null>(null)
   const [activeEvidence, setActiveEvidence] = useState<ChatResponse | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -101,18 +115,27 @@ export function ChatPage() {
 
     setBusy(true)
     setStage(null)
+    setTraces([])
+    const collected: TraceEvent[] = []
     try {
       const result = await chatApi.streamFiling(filingName, question, {
         conversationId: target?.id,
         onStage: setStage,
+        onTrace: (trace) => {
+          collected.push(trace)
+          setTraces(collected.slice(-MAX_TRACES))
+        },
       })
+      const answerId = `m_${Date.now()}_a`
+      setRevealId(answerId)
       if (target) {
         store.appendLocal(target.id, {
-          id: `m_${Date.now()}_a`,
+          id: answerId,
           role: 'assistant',
           content: result.answer,
           created_at: new Date().toISOString(),
           result,
+          traces: collected.slice(-MAX_TRACES),
         })
         // Adopt the server's rows so a reload or a second tab shows the same
         // message ids; optimistic local ids are only ever temporary.
@@ -138,6 +161,7 @@ export function ChatPage() {
     } finally {
       setBusy(false)
       setStage(null)
+      setTraces([])
     }
   }
 
@@ -217,6 +241,8 @@ export function ChatPage() {
                   result={message.result}
                   active={shownEvidence === message.result}
                   onOpenEvidence={() => openEvidence(message.result!)}
+                  traces={message.traces}
+                  reveal={revealId === message.id}
                 />
               ) : (
                 <DeclineCard
@@ -227,7 +253,7 @@ export function ChatPage() {
               ),
             )}
 
-            {busy && <ThinkingIndicator stage={stage} />}
+            {busy && <ThinkingIndicator stage={stage} traces={traces} />}
             <div ref={bottomRef} />
           </div>
         </div>

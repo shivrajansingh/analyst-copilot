@@ -59,6 +59,7 @@ from analyst_copilot.agent.orchestrator import DeepSearchOrchestrator
 from analyst_copilot.agent.prompts import format_history
 from analyst_copilot.agent.router import IntentRouter
 from analyst_copilot.agent.validator import AnswerValidator, Validation, Verdict
+from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.verification import verify_agent_answer
 from analyst_copilot.config.settings import Settings, get_settings
 from analyst_copilot.llm import ChatClient, get_chat_client
@@ -190,6 +191,7 @@ class AnalystAgent:
         history: Optional[Sequence[dict]] = None,
         on_stage: Optional[StageCallback] = None,
         scope_ready: Optional[bool] = None,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> AgentAnswer:
         """
         Answer one message.
@@ -253,6 +255,7 @@ class AnalystAgent:
                     on_stage=on_stage,
                     part=number,
                     part_total=len(parts),
+                    on_trace=on_trace,
                 )
             )
 
@@ -290,6 +293,7 @@ class AnalystAgent:
         on_stage: Optional[StageCallback],
         part: int,
         part_total: int,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> AnswerPart:
         located = _locator(part, part_total)
 
@@ -298,7 +302,9 @@ class AnalystAgent:
         escalation = ""
 
         if fast is not None and fast.found:
-            validation = self._validate(question, fast, scope, on_stage, located)
+            validation = self._validate(
+                question, fast, scope, on_stage, located, on_trace
+            )
             if validation.serves:
                 return AnswerPart(
                     question=question,
@@ -322,7 +328,9 @@ class AnalystAgent:
             on_stage,
             StageEvent(Stage.ESCALATING, "reading the whole filing", **located),
         )
-        return self._deep_path(question, scope, context, on_stage, escalation, fast, located)
+        return self._deep_path(
+            question, scope, context, on_stage, escalation, fast, located, on_trace
+        )
 
     def _fast_path(self, question: str, scope: Scope) -> Optional[QAAnswer]:
         """Tier 1: the existing retrieve-and-verify pipeline, unchanged."""
@@ -343,6 +351,7 @@ class AnalystAgent:
         scope: Scope,
         on_stage: Optional[StageCallback],
         located: dict,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ):
         if not self._settings.agent_validate_answers:
             return _served("validation disabled")
@@ -360,6 +369,7 @@ class AnalystAgent:
             corpus=scope.corpus,
             page_label=fast.location_label or "",
             evidence_snippet=fast.evidence_snippet,
+            on_trace=on_trace,
         )
 
     def _deep_path(
@@ -371,6 +381,7 @@ class AnalystAgent:
         escalation: str,
         fast: Optional[QAAnswer],
         located: dict,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> AnswerPart:
         """Tier 3: every page read, adjudicated, then deterministically verified."""
         corpus = scope.corpus
@@ -386,6 +397,7 @@ class AnalystAgent:
                     if on_stage
                     else None
                 ),
+                on_trace=on_trace,
             )
         except Exception as exc:  # noqa: BLE001 - a failed deep search is an abstention
             logger.exception("deep search failed for %r", question[:60])
@@ -435,7 +447,7 @@ class AnalystAgent:
         # many. Measured on the practice key, those are what the deep path gets
         # wrong, and there is no tier after this one, so a doubt abstains.
         _emit(on_stage, StageEvent(Stage.VALIDATING, "checking the answer", **located))
-        validation = self._validate_deep(question, result, verdict, scope)
+        validation = self._validate_deep(question, result, verdict, scope, on_trace)
         if not validation.serves:
             logger.info(
                 "deep answer withheld for %r: %s", question[:60], validation.reason
@@ -459,7 +471,14 @@ class AnalystAgent:
         )
         return base
 
-    def _validate_deep(self, question: str, result, verdict, scope: Scope):
+    def _validate_deep(
+        self,
+        question: str,
+        result,
+        verdict,
+        scope: Scope,
+        on_trace: Optional[tracing.TraceCallback] = None,
+    ):
         """
         Check a deep answer's meaning against the page it was cited to.
 
@@ -479,6 +498,7 @@ class AnalystAgent:
             evidence_snippet=verdict.snippet,
             computation=result.computation,
             inputs=result.inputs,
+            on_trace=on_trace,
         )
 
     # -- scope -------------------------------------------------------------- #

@@ -1,5 +1,8 @@
 import { Layers, ShieldCheck } from 'lucide-react'
-import type { ChatResponse } from '@/api/types'
+import type { ChatResponse, TraceEvent } from '@/api/types'
+import { useRevealedText } from '@/hooks/useRevealedText'
+import { SubagentSummary } from './SubagentSummary'
+import { ThinkingTrail } from './ThinkingTrail'
 import { CitationChip } from '@/components/evidence/CitationChip'
 import { Tooltip } from '@/components/ui/Tooltip'
 
@@ -18,11 +21,20 @@ export function AnswerCard({
   result,
   onOpenEvidence,
   active,
+  traces = [],
+  reveal = false,
 }: {
   result: ChatResponse
   onOpenEvidence: () => void
   active?: boolean
+  /** What the agents did to produce this. Kept so it stays expandable afterwards. */
+  traces?: TraceEvent[]
+  /** Animate the text in. Only for an answer that just arrived, never for history. */
+  reveal?: boolean
 }) {
+  // A reveal of already-verified text, not a stream from the model: the verifier
+  // has already finished, so no unproven figure can appear even for an instant.
+  const shown = useRevealedText(result.answer, reveal)
   // `citations` is authoritative; `evidence` repeats the first of them for
   // callers written against the single-answer shape.
   const citations = result.citations.length > 0
@@ -59,7 +71,13 @@ export function AnswerCard({
 
       <div className="py-4 pl-5 pr-4">
         <p className="tabular whitespace-pre-wrap font-mono text-[15px] leading-relaxed text-ink">
-          {result.answer}
+          {shown}
+          {shown.length < result.answer.length && (
+            <span
+              className="ml-0.5 inline-block h-[1em] w-[2px] translate-y-[0.1em] bg-accent animate-breathe"
+              aria-hidden
+            />
+          )}
         </p>
 
         {citations.length > 0 && (
@@ -73,6 +91,13 @@ export function AnswerCard({
                 active={active}
               />
             ))}
+          </div>
+        )}
+
+        {traces.length > 0 && (
+          <div className="mt-4 space-y-1.5 border-t border-line/70 pt-3">
+            <SubagentSummary traces={traces} />
+            <ThinkingTrail traces={traces} />
           </div>
         )}
 

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from analyst_copilot.agent.tools.base import ToolRegistry, ToolResult
+from analyst_copilot.agent import trace as tracing
 from analyst_copilot.llm.base import ChatClient, ChatTurn, ToolCall
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class AgentRuntime:
         terminal_tools: Sequence[str] = (),
         history: Optional[List[Dict[str, Any]]] = None,
         on_tool: Optional[Callable[[str, ToolResult], None]] = None,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> AgentRun:
         """
         Drive the conversation until the agent reports, or its bounds are hit.
@@ -116,6 +118,13 @@ class AgentRuntime:
 
             messages.append(turn.message or {"role": "assistant", "content": turn.content})
 
+            # Models often say what they are about to look for before calling a
+            # tool. That sentence is the only genuine window into the reasoning,
+            # so it is reported when it exists and nothing is invented when it
+            # does not.
+            if turn.content.strip() and turn.wants_tools:
+                tracing.emit(on_trace, tracing.thought("", turn.content))
+
             if not turn.wants_tools:
                 run.content = turn.content.strip()
                 if not run.content:
@@ -127,7 +136,9 @@ class AgentRuntime:
                     )
                 return run
 
-            stop = self._execute(turn, registry, terminal, messages, run, on_tool)
+            stop = self._execute(
+                turn, registry, terminal, messages, run, on_tool, on_trace
+            )
             if stop:
                 return run
             if run.tool_calls >= self._max_tool_calls:
@@ -153,6 +164,7 @@ class AgentRuntime:
         messages: List[Dict[str, Any]],
         run: AgentRun,
         on_tool: Optional[Callable[[str, ToolResult], None]],
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> bool:
         """
         Run this turn's tool calls. Returns True when the run should end.
@@ -171,6 +183,7 @@ class AgentRuntime:
                 messages.append(_tool_message(call, "Reported."))
                 continue
 
+            tracing.emit(on_trace, tracing.tool_call("", call.name))
             result = registry.invoke(call.name, call.arguments)
             if on_tool is not None:
                 on_tool(call.name, result)

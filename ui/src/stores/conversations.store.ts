@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatResponse } from '@/api/types'
+import type { ChatResponse, TraceEvent } from '@/api/types'
 import { conversationsApi } from '@/api/endpoints/conversations'
 import { normalizeChatResponse } from '@/api/normalize'
 
@@ -12,6 +12,14 @@ export interface Message {
   result?: ChatResponse
   /** Present when the request itself failed, as distinct from a decline. */
   error?: string
+  /**
+   * What the agents did while producing this answer.
+   *
+   * Client-side only, and deliberately not persisted: it is progress, not
+   * evidence. A reloaded thread shows the answer and its citations, which are
+   * the parts that have to survive.
+   */
+  traces?: TraceEvent[]
 }
 
 export interface Conversation {

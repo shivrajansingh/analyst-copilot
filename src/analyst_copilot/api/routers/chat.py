@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from analyst_copilot.agent import AnalystAgent, StageEvent
+from analyst_copilot.agent.trace import TraceEvent
 from analyst_copilot.api.dependencies import (
     current_user_id,
     get_analyst_agent,
@@ -92,9 +93,12 @@ async def chat(
         200: {
             "content": {"text/event-stream": {}},
             "description": (
-                "Server-sent events. `stage` events report progress; a single "
-                "`answer` event carries the finished ChatResponse; `error` "
-                "carries a failure. The stream ends after `answer` or `error`."
+                "Server-sent events. `stage` events report milestones and "
+                "`trace` events the activity underneath them — which agent is "
+                "running, what it said it was about to look for, which tool it "
+                "called. A single `answer` event carries the finished "
+                "ChatResponse; `error` carries a failure. The stream ends after "
+                "`answer` or `error`."
             ),
         }
     },
@@ -122,10 +126,17 @@ async def chat_stream(
         # event loop has to be explicit.
         loop.call_soon_threadsafe(queue.put_nowait, ("stage", event.to_dict()))
 
+    def on_trace(event: TraceEvent) -> None:
+        # Same hop, and the same reason. Traces arrive from every reader thread
+        # at once, which is exactly why they are a separate event type: a client
+        # can render the milestones and ignore the firehose.
+        loop.call_soon_threadsafe(queue.put_nowait, ("trace", event.to_dict()))
+
     async def produce() -> None:
         try:
             response = await _answer(
-                request, filings, collections, agent, conversations, user_id, on_stage
+                request, filings, collections, agent, conversations, user_id,
+                on_stage, on_trace,
             )
             await queue.put(("answer", response.model_dump(mode="json")))
         except ApiError as exc:
@@ -185,6 +196,7 @@ async def _answer(
     conversations: ConversationService,
     user_id: str,
     on_stage,
+    on_trace=None,
 ) -> ChatResponse:
     """Answer, then record the exchange. Used by both endpoints."""
     ready = await run_in_threadpool(_scope_is_ready, request, filings, collections)
@@ -202,6 +214,7 @@ async def _answer(
             history=history,
             on_stage=on_stage,
             scope_ready=ready,
+            on_trace=on_trace,
         )
     except ValueError as exc:
         raise UpstreamUnavailable(f"The language model could not be reached: {exc}") from exc

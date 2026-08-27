@@ -1,6 +1,6 @@
 import { ApiError, api } from '../client'
 import { normalizeChatResponse } from '../normalize'
-import type { ChatResponse, StageEvent } from '../types'
+import type { ChatResponse, StageEvent, TraceEvent } from '../types'
 
 /** One parsed server-sent event. */
 interface ServerEvent {
@@ -49,6 +49,8 @@ export interface AskOptions {
   conversationId?: string
   /** Called for every progress milestone, in order. */
   onStage?: (stage: StageEvent) => void
+  /** Called for every step underneath those milestones, in order. */
+  onTrace?: (trace: TraceEvent) => void
   signal?: AbortSignal
 }
 
@@ -62,7 +64,7 @@ export interface AskOptions {
  */
 async function askStreaming(
   body: Record<string, unknown>,
-  { onStage, signal }: AskOptions,
+  { onStage, onTrace, signal }: AskOptions,
 ): Promise<ChatResponse> {
   const response = await api.stream('/chat/stream', body, signal)
   const reader = response.body!.getReader()
@@ -81,6 +83,7 @@ async function askStreaming(
       buffer = rest
       for (const event of events) {
         if (event.name === 'stage') onStage?.(event.data as StageEvent)
+        else if (event.name === 'trace') onTrace?.(event.data as TraceEvent)
         else if (event.name === 'answer')
           answer = normalizeChatResponse(event.data as ChatResponse)
         else if (event.name === 'error') {

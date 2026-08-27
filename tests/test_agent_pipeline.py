@@ -252,8 +252,7 @@ class EscalateThenAccept:
     def __init__(self):
         self.calls = []
 
-    def check(self, question, answer, doc_name, page, corpus, page_label="",
-              evidence_snippet="", computation="", inputs=()):
+    def check(self, question, answer, doc_name, page, corpus, computation="", inputs=(), **_extra):
         self.calls.append({"answer": answer, "computation": computation, "inputs": list(inputs)})
         first = len(self.calls) == 1
         return Validation(

@@ -475,3 +475,42 @@ def test_page_endpoint_404s_for_a_page_the_filing_does_not_have(client, monkeypa
     )
     response = client.get(f"{API}/filings/{INDEXED}/pages/99")
     assert response.status_code == 404
+
+
+def test_chat_stream_reports_the_activity_under_each_milestone(client):
+    """
+    Stages are milestones; traces are what happened underneath them. A client
+    should be able to render the thinking without asking for a second endpoint.
+    """
+    response = client.post(
+        f"{API}/chat/stream",
+        json={"doc_name": INDEXED, "question": "What is the unknown figure?"},
+    )
+    events = _events(response.text)
+    traces = [payload for name, payload in events if name == "trace"]
+
+    kinds = {trace["kind"] for trace in traces}
+    assert kinds == {"agent", "thought", "tool"}
+    assert [t["status"] for t in traces if t["kind"] == "agent"] == ["running", "empty"]
+    assert [t["tool"] for t in traces if t["kind"] == "tool"] == ["search_document"]
+    assert all(trace["agent"] == "reader 1" for trace in traces)
+    # Traces come before the answer, which is still the last event.
+    assert [name for name, _ in events][-1] == "answer"
+
+
+def test_the_stream_never_carries_tool_arguments_or_results(client):
+    """
+    A tool result is document text the verifier has not seen yet. Putting it on
+    the wire would leak exactly the unverified figures the product withholds --
+    so a trace carries a tool's *name* and nothing else.
+    """
+    response = client.post(
+        f"{API}/chat/stream",
+        json={"doc_name": INDEXED, "question": "What is the unknown figure?"},
+    )
+    for name, payload in _events(response.text):
+        if name != "trace":
+            continue
+        assert set(payload) <= {"kind", "agent", "text", "tool", "status"}
+        assert "arguments" not in payload
+        assert "result" not in payload

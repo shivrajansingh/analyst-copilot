@@ -42,6 +42,7 @@ from typing import Optional, Sequence
 from analyst_copilot.agent.corpus import DocumentCorpus
 from analyst_copilot.agent.prompts import VALIDATOR_SYSTEM, build_validator_prompt
 from analyst_copilot.agent.runtime import AgentRuntime
+from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.tools import (
     REPORT_VALIDATION,
     CalculateTool,
@@ -113,6 +114,7 @@ class AnswerValidator:
         evidence_snippet: str = "",
         computation: str = "",
         inputs: Sequence[object] = (),
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> Validation:
         if page is None:
             return Validation(Verdict.UNCHECKED, "no page was cited")
@@ -149,6 +151,7 @@ class AnswerValidator:
             ),
             registry=registry,
             terminal_tools=(REPORT_VALIDATION,),
+            on_trace=tracing.scoped(on_trace, "checker"),
         )
 
         if run.error:

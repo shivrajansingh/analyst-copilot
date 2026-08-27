@@ -22,6 +22,7 @@ from analyst_copilot.agent.decompose import QuestionDecomposer
 from analyst_copilot.agent.models import Stage, StageEvent
 from analyst_copilot.agent.orchestrator import DeepResult
 from analyst_copilot.agent.router import IntentRouter
+from analyst_copilot.agent.trace import AgentStatus, agent_status, thought, tool_call
 from analyst_copilot.agent.validator import Validation, Verdict
 
 
@@ -33,18 +34,10 @@ class StubValidator:
         self.reason = reason
         self.calls = []
 
-    def check(
-        self,
-        question,
-        answer,
-        doc_name,
-        page,
-        corpus,
-        page_label="",
-        evidence_snippet="",
-        computation="",
-        inputs=(),
-    ) -> Validation:
+    # `**_extra` on purpose: these doubles stand in for collaborators whose
+    # signatures grow (a derivation, a trace callback), and a test that fails
+    # because a new optional argument was added is testing the wrong thing.
+    def check(self, question, answer, doc_name, page, corpus, **_extra) -> Validation:
         self.calls.append((question, answer, page))
         return Validation(self.verdict, self.reason)
 
@@ -56,10 +49,17 @@ class StubDeepSearch:
         self.result = result
         self.calls = []
 
-    def search(self, question, corpus, context="", on_stage=None) -> DeepResult:
+    def search(
+        self, question, corpus, context="", on_stage=None, on_trace=None, **_extra
+    ) -> DeepResult:
         self.calls.append(question)
         if on_stage is not None:
             on_stage(StageEvent(Stage.DEEP_SEARCH, "reading", done=1, total=1))
+        if on_trace is not None:
+            on_trace(agent_status("reader 1", AgentStatus.RUNNING))
+            on_trace(thought("reader 1", "Checking the cash flow statement."))
+            on_trace(tool_call("reader 1", "search_document"))
+            on_trace(agent_status("reader 1", AgentStatus.EMPTY))
         return self.result or DeepResult(
             found=False,
             reason="stubbed deep search found nothing",

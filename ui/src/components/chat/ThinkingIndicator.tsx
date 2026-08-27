@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Layers, Search, ShieldCheck, Sparkles } from 'lucide-react'
-import type { StageEvent } from '@/api/types'
+import type { StageEvent, TraceEvent } from '@/api/types'
+import { SubagentSummary } from './SubagentSummary'
+import { ThinkingTrail } from './ThinkingTrail'
 import { cn } from '@/lib/cn'
 
 /**
@@ -43,7 +45,14 @@ const ICONS: Partial<Record<StageEvent['stage'], typeof Search>> = {
   verifying: ShieldCheck,
 }
 
-export function ThinkingIndicator({ stage }: { stage?: StageEvent | null }) {
+export function ThinkingIndicator({
+  stage,
+  traces = [],
+}: {
+  stage?: StageEvent | null
+  /** The live activity underneath the milestone. Both panels self-hide when empty. */
+  traces?: TraceEvent[]
+}) {
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -104,6 +113,13 @@ export function ThinkingIndicator({ stage }: { stage?: StageEvent | null }) {
             className={cn('h-full rounded-full bg-accent transition-[width] duration-300')}
             style={{ width: `${percent}%` }}
           />
+        </div>
+      )}
+
+      {traces.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <SubagentSummary traces={traces} />
+          <ThinkingTrail traces={traces} />
         </div>
       )}
     </div>

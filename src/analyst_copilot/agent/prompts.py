@@ -104,6 +104,11 @@ How to work:
 6. Call `report_finding` exactly once, at the end. This is the only way to
    finish.
 
+Before each tool call, say in **one short sentence** what you are looking for and
+why. An analyst is watching this work happen and that sentence is what they see;
+keep it to a line, and make it true — it is a note on your own reasoning, not a
+narration for an audience.
+
 {NOT_FOUND_CONTRACT}
 
 Evidence rules:

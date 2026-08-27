@@ -40,6 +40,7 @@ from analyst_copilot.agent.prompts import (
     build_synthesis_prompt,
 )
 from analyst_copilot.agent.reader import ShardReader, _as_page_index
+from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.runtime import AgentRuntime
 from analyst_copilot.agent.tools import (
     SUBMIT_ANSWER,
@@ -121,6 +122,7 @@ class DeepSearchOrchestrator:
         corpus: DocumentCorpus,
         context: str = "",
         on_stage: Optional[StageCallback] = None,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> DeepResult:
         pages = corpus.prewarm()
         shards = corpus.shards(self._pages_per_shard)
@@ -153,7 +155,7 @@ class DeepSearchOrchestrator:
             ),
         )
 
-        findings = self._fan_out(question, corpus, shards, context, on_stage)
+        findings = self._fan_out(question, corpus, shards, context, on_stage, on_trace)
         result = DeepResult(
             findings=findings,
             shards_run=len(shards),
@@ -175,7 +177,7 @@ class DeepSearchOrchestrator:
             ),
         )
 
-        self._synthesize(question, corpus, result, context)
+        self._synthesize(question, corpus, result, context, on_trace)
         return result
 
     # -- fan-out ------------------------------------------------------------ #
@@ -186,6 +188,7 @@ class DeepSearchOrchestrator:
         shards: Sequence,
         context: str,
         on_stage: Optional[StageCallback],
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> List[Finding]:
         reader = ShardReader(
             self._chat,
@@ -200,10 +203,21 @@ class DeepSearchOrchestrator:
             max_workers=min(self._max_concurrency, len(shards)),
             thread_name_prefix="reader",
         ) as pool:
-            futures = {
-                pool.submit(reader.read, question, shard, context): shard
-                for shard in shards
-            }
+            futures = {}
+            for shard in shards:
+                label = f"reader {shard.index}"
+                tracing.emit(
+                    on_trace, tracing.agent_status(label, tracing.AgentStatus.RUNNING)
+                )
+                futures[
+                    pool.submit(
+                        reader.read,
+                        question,
+                        shard,
+                        context,
+                        tracing.scoped(on_trace, label),
+                    )
+                ] = shard
             for future in as_completed(futures):
                 shard = futures[future]
                 try:
@@ -215,6 +229,10 @@ class DeepSearchOrchestrator:
                     )
                 findings.append(finding)
                 completed += 1
+                tracing.emit(
+                    on_trace,
+                    tracing.agent_status(f"reader {shard.index}", _outcome(finding)),
+                )
                 _emit(
                     on_stage,
                     StageEvent(
@@ -239,6 +257,7 @@ class DeepSearchOrchestrator:
         corpus: DocumentCorpus,
         result: DeepResult,
         context: str,
+        on_trace: Optional[tracing.TraceCallback] = None,
     ) -> None:
         contributions = result.contributions
         if not contributions:
@@ -293,6 +312,9 @@ class DeepSearchOrchestrator:
             max_tokens=self._max_tokens,
         )
 
+        tracing.emit(
+            on_trace, tracing.agent_status("synthesis", tracing.AgentStatus.RUNNING)
+        )
         run = runtime.run(
             system=SYNTHESIS_SYSTEM,
             user=build_synthesis_prompt(
@@ -304,6 +326,7 @@ class DeepSearchOrchestrator:
             ),
             registry=registry,
             terminal_tools=(SUBMIT_ANSWER,),
+            on_trace=tracing.scoped(on_trace, "synthesis"),
         )
 
         if run.error or not run.reported:
@@ -440,6 +463,17 @@ def _inputs_from(raw: object, doc_name: str) -> List[EvidenceInput]:
             )
         )
     return inputs
+
+
+def _outcome(finding: Finding) -> "tracing.AgentStatus":
+    """How a reader ended, for the progress display."""
+    if finding.found:
+        return tracing.AgentStatus.FOUND
+    if finding.partial:
+        return tracing.AgentStatus.PARTIAL
+    if "failed" in finding.reasoning or "crashed" in finding.reasoning:
+        return tracing.AgentStatus.FAILED
+    return tracing.AgentStatus.EMPTY
 
 
 def _emit(callback: Optional[StageCallback], event: StageEvent) -> None:

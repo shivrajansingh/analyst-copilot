@@ -24,6 +24,7 @@ from analyst_copilot.agent.corpus import DocumentCorpus, DocumentUnavailable, Sh
 from analyst_copilot.agent.models import EvidenceInput, Finding
 from analyst_copilot.agent.prompts import READER_SYSTEM, build_reader_prompt
 from analyst_copilot.agent.runtime import AgentRun, AgentRuntime
+from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.tools import (
     REPORT_FINDING,
     CalculateTool,
@@ -60,7 +61,13 @@ class ShardReader:
         self._max_tokens = max_tokens
         self._temperature = temperature
 
-    def read(self, question: str, shard: Shard, context: str = "") -> Finding:
+    def read(
+        self,
+        question: str,
+        shard: Shard,
+        context: str = "",
+        on_trace: Optional[tracing.TraceCallback] = None,
+    ) -> Finding:
         """Read one shard. Never raises: a failed reader is a not-found reader."""
         if not shard.pages:
             return Finding(found=False, shard=shard.index)
@@ -94,6 +101,7 @@ class ShardReader:
             ),
             registry=registry,
             terminal_tools=(REPORT_FINDING,),
+            on_trace=on_trace,
         )
 
         finding = self._to_finding(run, shard, doc_name)
