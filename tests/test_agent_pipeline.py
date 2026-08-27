@@ -413,3 +413,70 @@ def test_findings_are_rendered_with_their_provenance():
     assert "PARTIAL" in rendered
     assert "computed: (1577-1373)/1373*100" in rendered
     assert "FY2022 capex=1,577 (page 60)" in rendered
+
+
+# --- partials reach the adjudicator ---------------------------------------- #
+def test_partials_alone_are_enough_to_run_synthesis():
+    """
+    A question spanning two statements produces no complete answer from anybody.
+    Adjudicating only on complete findings made those questions unanswerable no
+    matter how much of the document was read.
+    """
+    from analyst_copilot.agent.orchestrator import DeepSearchOrchestrator
+
+    findings = [
+        Finding(found=False, partial=True, doc_name=DOC,
+                inputs=[EvidenceInput("FY2019 revenue", "6,489", DOC, 69)]),
+        Finding(found=False, partial=True, doc_name=DOC,
+                inputs=[EvidenceInput("FY2019 capex", "116", DOC, 72)]),
+        Finding(found=False),
+    ]
+    result = DeepResult(findings=findings)
+    assert result.candidates == [], "neither reader could answer"
+    assert len(result.contributions) == 2, "but both hold figures the answer needs"
+
+
+def test_a_lone_partial_is_never_served_as_a_complete_answer():
+    """
+    Synthesis is what completes a partial. If it is unavailable, the fallback
+    must not promote a fragment -- an incomplete answer served as complete is
+    exactly the -1 the pipeline exists to avoid.
+    """
+    from analyst_copilot.agent.orchestrator import DeepSearchOrchestrator
+
+    class DeadChat:
+        @property
+        def model_name(self):
+            return "dead"
+
+        def complete(self, *a, **k):
+            raise RuntimeError("down")
+
+        def complete_with_tools(self, *a, **k):
+            raise RuntimeError("down")
+
+    orchestrator = DeepSearchOrchestrator(DeadChat())
+    result = DeepResult(
+        findings=[
+            Finding(found=False, partial=True, answer="6,489", doc_name=DOC,
+                    inputs=[EvidenceInput("FY2019 revenue", "6,489", DOC, 69)]),
+            Finding(found=False, partial=True, answer="116", doc_name=DOC,
+                    inputs=[EvidenceInput("FY2019 capex", "116", DOC, 72)]),
+        ]
+    )
+    orchestrator._synthesize("Capex as a % of revenue?", _StubCorpus(), result, "")
+    assert not result.found
+    assert "adjudicator" in result.reason
+
+
+class _StubCorpus:
+    """Just enough corpus for synthesis to build its toolset."""
+
+    def available_documents(self):
+        return [DOC]
+
+    def all_pages(self):
+        return []
+
+    def doc_names(self):
+        return [DOC]

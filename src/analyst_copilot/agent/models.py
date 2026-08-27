@@ -120,6 +120,20 @@ class Finding:
         """Whether the figure was computed rather than read off a page."""
         return bool(self.computation and self.inputs)
 
+    @property
+    def contributes(self) -> bool:
+        """
+        Whether this finding is worth showing the adjudicator.
+
+        A reader that cannot answer may still hold half of what the answer needs
+        -- revenue when the question also wants capex, and the two statements
+        sit on pages assigned to different readers. Such a finding reports
+        `found: false, partial: true`, and dropping it is how a question
+        spanning two statements becomes unanswerable however many agents read
+        the document.
+        """
+        return self.found or self.partial
+
 
 @dataclass
 class Citation:

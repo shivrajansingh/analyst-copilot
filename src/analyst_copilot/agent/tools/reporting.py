@@ -89,7 +89,11 @@ invented answer is far worse than none.
                 "inputs": {
                     "type": "array",
                     "items": _EVIDENCE_INPUT,
-                    "description": "Required when the answer was computed. One entry per input figure.",
+                    "description": (
+                        "One entry per figure you read off a page. Required when the "
+                        "answer was computed, and required on a partial finding -- "
+                        "on a partial this is the whole contribution."
+                    ),
                 },
                 "computation": {
                     "type": "string",
@@ -101,8 +105,12 @@ invented answer is far worse than none.
                 "partial": {
                     "type": "boolean",
                     "description": (
-                        "True when your pages carry part of what was asked but not "
-                        "all of it. Report the part you have."
+                        "True when your pages carry some of the figures the question "
+                        "needs but not enough to answer it -- revenue when capex is "
+                        "also required, and the two statements sit on different "
+                        "readers' pages. Set found=false and partial=true, and put "
+                        "every figure you did read in `inputs`. Another reader holds "
+                        "the rest and they will be combined."
                     ),
                 },
                 "confidence": {

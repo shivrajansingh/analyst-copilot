@@ -118,16 +118,26 @@ class ShardReader:
             )
 
         report = run.report or {}
-        if not bool(report.get("found")):
+        found = bool(report.get("found"))
+        partial = bool(report.get("partial"))
+        if not found and not partial:
             return Finding(found=False, reasoning=str(report.get("why_authoritative") or ""))
 
         answer = str(report.get("answer") or "").strip()
         quote = str(report.get("quote") or "").strip()
-        if not answer:
+        inputs = self._inputs(report.get("inputs"), doc_name)
+
+        if found and not answer:
             return Finding(found=False, reasoning="reported found with no answer")
+        if not found and not (inputs or answer or quote):
+            # A partial has to carry something the adjudicator can use. Saying
+            # "I have part of it" without the figures is not a contribution.
+            return Finding(
+                found=False, reasoning="reported partial with nothing to contribute"
+            )
 
         page_index = self._resolve_page(shard, report.get("page"), quote)
-        if page_index is None:
+        if page_index is None and found:
             return Finding(
                 found=False,
                 reasoning=(
@@ -137,16 +147,18 @@ class ShardReader:
             )
 
         return Finding(
-            found=True,
+            found=found,
             answer=answer,
             doc_name=doc_name,
+            # A partial may have no single page of its own: its figures carry
+            # their own pages in `inputs`.
             page=page_index,
             quote=quote,
             why_authoritative=str(report.get("why_authoritative") or "").strip(),
-            inputs=self._inputs(report.get("inputs"), doc_name),
+            inputs=inputs,
             computation=str(report.get("computation") or "").strip(),
             confidence=_as_float(report.get("confidence"), default=0.5),
-            partial=bool(report.get("partial")),
+            partial=partial,
         )
 
     def _resolve_page(

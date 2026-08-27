@@ -13,6 +13,10 @@ it", each pointing somewhere different. Two things keep that in hand:
 
 - **Readers cannot overlap.** Each page is assigned to exactly one reader, so
   duplicate reports are genuinely different pages, not the same page seen twice.
+  The cost of that is real: a question needing two statements gets no complete
+  answer from anybody, only fragments. So readers report **partial** findings --
+  the figures they did read, with the pages they came from -- and synthesis
+  combines them.
 - **Synthesis adjudicates, and only synthesis.** It sees candidate findings
   rather than raw pages, so its input stays small however large the filing, and
   it can compare candidates on authority instead of guessing among excerpts.
@@ -75,7 +79,19 @@ class DeepResult:
 
     @property
     def candidates(self) -> List[Finding]:
+        """Findings that claim a complete answer."""
         return [finding for finding in self.findings if finding.found]
+
+    @property
+    def contributions(self) -> List[Finding]:
+        """
+        Everything the adjudicator should see: complete answers and partials.
+
+        A question needing two statements produces no complete answer from any
+        single reader, only partials. Adjudicating on `candidates` alone made
+        those questions unanswerable no matter how much of the document was read.
+        """
+        return [finding for finding in self.findings if finding.contributes]
 
 
 class DeepSearchOrchestrator:
@@ -144,14 +160,16 @@ class DeepSearchOrchestrator:
             pages_read=pages,
         )
 
-        candidates = result.candidates
+        contributions = result.contributions
+        partials = sum(1 for finding in contributions if not finding.found)
         _emit(
             on_stage,
             StageEvent(
                 stage=Stage.SYNTHESIZING,
                 detail=(
-                    f"{len(candidates)} of {len(shards)} readers found something"
-                    if candidates
+                    f"{len(contributions)} of {len(shards)} readers found something"
+                    + (f" ({partials} partial)" if partials else "")
+                    if contributions
                     else "no reader found the answer"
                 ),
             ),
@@ -222,19 +240,20 @@ class DeepSearchOrchestrator:
         result: DeepResult,
         context: str,
     ) -> None:
-        candidates = result.candidates
-        if not candidates:
+        contributions = result.contributions
+        if not contributions:
             result.found = False
             result.reason = (
                 "Every page of the document was read and no page answered the question."
             )
             return
 
-        # One candidate that is neither partial nor computed needs no
-        # adjudication: there is nothing to compare it against, and a synthesis
-        # call over a single finding only adds a chance to paraphrase it wrongly.
-        if len(candidates) == 1 and not candidates[0].partial:
-            only = candidates[0]
+        # One complete finding needs no adjudication: there is nothing to compare
+        # it against, and a synthesis call over a single finding only adds a
+        # chance to paraphrase it wrongly. A partial always goes to synthesis --
+        # completing it is the whole reason it was kept.
+        if len(contributions) == 1 and contributions[0].found and not contributions[0].partial:
+            only = contributions[0]
             result.found = True
             result.answer = only.answer
             result.doc_name = only.doc_name
@@ -245,9 +264,11 @@ class DeepSearchOrchestrator:
             result.reason = only.why_authoritative or "the only page that answered"
             return
 
+        # Complete answers first, then partials by confidence: the adjudicator
+        # should read a finished answer before the fragments it might replace.
         ranked = sorted(
-            candidates,
-            key=lambda item: (not item.partial, item.confidence),
+            contributions,
+            key=lambda item: (item.found and not item.partial, item.confidence),
             reverse=True,
         )
         if len(ranked) > MAX_CANDIDATES:
@@ -287,9 +308,19 @@ class DeepSearchOrchestrator:
 
         if run.error or not run.reported:
             # Synthesis failed, but the readers' work is still good. Fall back to
-            # the strongest candidate rather than discarding a whole fan-out
-            # because the adjudicator timed out; the verifier still gates it.
-            best = ranked[0]
+            # the strongest complete candidate rather than discarding a whole
+            # fan-out because the adjudicator timed out; the verifier still gates
+            # it. A partial is not a fallback -- an incomplete answer served as
+            # complete is exactly the -1 this pipeline exists to avoid.
+            complete = [finding for finding in ranked if finding.found and not finding.partial]
+            if not complete:
+                result.found = False
+                result.reason = (
+                    "readers found only partial evidence and the adjudicator that "
+                    "would have combined it was unavailable"
+                )
+                return
+            best = complete[0]
             logger.warning(
                 "synthesis unavailable (%s); falling back to reader %s",
                 run.error or "no report",

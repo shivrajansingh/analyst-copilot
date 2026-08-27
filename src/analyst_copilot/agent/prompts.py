@@ -33,7 +33,11 @@ If the answer is not in the text you can see, report it as not found. Say
 estimate it, do not reason toward it from what you know about the company, and
 do not offer the closest figure you happened to see. Reporting nothing is a
 correct, expected and frequently right outcome — most pages of a filing do not
-answer any given question."""
+answer any given question.
+
+"Not found" means you cannot support an answer. It does not mean you must throw
+away a figure the question needs and you did read: report that as a partial
+finding instead, where every rule above still holds in full."""
 
 TABLE_DISCIPLINE = """\
 Pages are Markdown. Financial tables are real tables, so a figure belongs to the
@@ -70,8 +74,9 @@ You may do this, and it is often the only way to answer. Two conditions:
    recorded in `computation`. Do not divide, multiply or take percentages in
    your head.
 
-What you may not do is invent an input. If one of the two figures you need is
-not on your pages, the answer is not found."""
+What you may not do is invent an input. If one of the figures you need is not on
+your pages, do not reason toward it — report what you did read as a partial
+finding and let it be combined with another reader's."""
 
 
 # --------------------------------------------------------------------------- #
@@ -105,9 +110,30 @@ Evidence rules:
 - `quote` must be copied verbatim from a page you read — the sentence, or the
   table row with its header. If you cannot quote it, you did not find it.
 - `page` is the page number as shown by `list_pages`.
-- Set `partial: true` when your pages carry part of what was asked but not all
-  of it. That is useful, and honest, and better than a whole answer you cannot
-  support.
+
+**When your pages hold only part of what is needed — report it.**
+
+Many questions need figures from two different statements: revenue from the
+income statement and capital expenditure from the cash flow statement, say. Those
+statements are usually pages apart, which means they are usually assigned to
+*different readers*. Neither reader can answer. Between them they hold everything
+required.
+
+So if your pages carry some of the figures the question needs but not enough to
+answer it, report:
+
+    found: false, partial: true
+
+and put every figure you did find in `inputs`, each with its label, its value as
+printed, and the page you read it from. Quote the row in `quote`.
+
+This is not a failure and it is not a guess. It is the only route by which a
+question spanning two statements is ever answered, because the senior analyst
+combines your figures with another reader's. A partial finding carrying three
+real figures is worth far more than a `found: false` that throws them away.
+
+What still applies: only figures you actually read, only from your own pages, and
+no reasoning toward a number that is not printed.
 
 {TABLE_DISCIPLINE}
 
@@ -129,11 +155,14 @@ def build_reader_prompt(
         f"  page {page.display_page:>4}  {page.char_count:>7,} chars" for page in pages
     )
     numbers = [page.display_page for page in pages]
-    span = (
-        f"page {numbers[0]}"
-        if len(numbers) == 1
-        else f"pages {min(numbers)}-{max(numbers)}"
-    )
+    # An empty slice never reaches a reader (ShardReader returns early), but the
+    # prompt builder should not be the thing that discovers that.
+    if not numbers:
+        span = "no pages"
+    elif len(numbers) == 1:
+        span = f"page {numbers[0]}"
+    else:
+        span = f"pages {min(numbers)}-{max(numbers)}"
     extra = f"\n\nContext from the conversation:\n{context}" if context else ""
     return f"""Question:
 {question}{extra}
@@ -143,8 +172,12 @@ You are reader {shard_index} of {shard_total}. You may read {span} of this docum
 
 {listing}
 
-Read your pages and call `report_finding` once. If your pages do not answer the
-question, report found=false — that is the expected result for most slices."""
+Read your pages and call `report_finding` once.
+
+If your pages do not answer the question, report found=false — that is the
+expected result for most slices. If they hold some of the figures the question
+needs but not all, report found=false with partial=true and list those figures in
+`inputs`."""
 
 
 # --------------------------------------------------------------------------- #
@@ -166,9 +199,18 @@ What you are resolving:
 - **Conflicts.** Two different figures for the same thing usually means one
   reader took a number from the wrong year's column, or from a segment rather
   than the consolidated total. Check the page before choosing.
-- **Partial findings.** Several `partial` findings may combine into one answer —
-  the two inputs to a ratio, or the two years of a change. Combine them, and use
-  `calculate` for the arithmetic.
+- **Partial findings.** These are the interesting ones. A reader marked
+  `PARTIAL` could not answer but did read figures the question needs — because
+  the income statement and the cash flow statement are pages apart and were
+  assigned to different readers. Combine them, and use `calculate` for the
+  arithmetic.
+
+  **You are not limited to what the readers brought you.** You can read any page
+  of the filing. If the partials give you two of the three figures you need, go
+  and read the third rather than reporting not-found: `search_document` for the
+  filing's own wording, then `read_page`. A question is unanswerable only when
+  the document does not contain the figures — not when no single reader happened
+  to hold all of them.
 - **Nothing found.** If no reader found anything, or the findings do not stand
   up when you check them, the answer is not found. Report that.
 

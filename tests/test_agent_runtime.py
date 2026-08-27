@@ -328,3 +328,69 @@ def test_derived_inputs_are_carried_through_with_their_pages(corpus):
     assert finding.is_derived
     assert [item.page for item in finding.inputs] == [1, 1]
     assert finding.inputs[0].doc_name == DOC
+
+
+# --- partial findings ------------------------------------------------------- #
+def test_a_partial_finding_survives_even_though_it_cannot_answer(corpus):
+    """
+    The measured case: capex is on the cash flow statement and revenue on the
+    income statement, pages apart and so in different readers' slices. Neither
+    reader can answer; between them they hold everything the question needs. A
+    reader that reports its figures and is then discarded makes such a question
+    unanswerable however much of the document was read.
+    """
+    chat = ScriptedChat(
+        [
+            turn(
+                calls=[
+                    call(
+                        REPORT_FINDING,
+                        '{"found": false, "partial": true, '
+                        '"quote": "| Purchases of property, plant and equipment (PP&E) | (1,577) | (1,373) |", '
+                        '"inputs": [{"label": "FY2022 capex", "value": "1,577", "page": 2}]}',
+                    )
+                ]
+            )
+        ]
+    )
+    finding = ShardReader(chat, corpus).read("Capex as a % of revenue?", _shard(corpus))
+    assert not finding.found, "it did not answer the question"
+    assert finding.partial
+    assert finding.contributes, "but it must still reach the adjudicator"
+    assert [item.value for item in finding.inputs] == ["1,577"]
+
+
+def test_a_partial_needs_no_page_of_its_own(corpus):
+    """Its figures carry their own pages; the finding itself may name none."""
+    chat = ScriptedChat(
+        [
+            turn(
+                calls=[
+                    call(
+                        REPORT_FINDING,
+                        '{"found": false, "partial": true, '
+                        '"inputs": [{"label": "FY2022 revenue", "value": "88,187", "page": 3}]}',
+                    )
+                ]
+            )
+        ]
+    )
+    finding = ShardReader(chat, corpus).read("Capex as a % of revenue?", _shard(corpus))
+    assert finding.contributes
+    assert finding.inputs[0].page == 2
+
+
+def test_a_partial_carrying_nothing_is_not_a_contribution(corpus):
+    """Claiming to hold part of it without the figures is not a contribution."""
+    chat = ScriptedChat(
+        [turn(calls=[call(REPORT_FINDING, '{"found": false, "partial": true}')])]
+    )
+    finding = ShardReader(chat, corpus).read("Capex as a % of revenue?", _shard(corpus))
+    assert not finding.contributes
+    assert "nothing to contribute" in finding.reasoning
+
+
+def test_a_plain_not_found_still_contributes_nothing(corpus):
+    chat = ScriptedChat([turn(calls=[call(REPORT_FINDING, '{"found": false}')])])
+    finding = ShardReader(chat, corpus).read("What was capex?", _shard(corpus))
+    assert not finding.contributes
