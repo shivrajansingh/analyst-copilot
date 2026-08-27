@@ -120,6 +120,18 @@ changes after verification is unverified again.
 exactly one `answer` event. Two event types because the volumes differ by two
 orders of magnitude — a handful of milestones against several hundred steps.
 
+On a fast answer the checker is the only agent, and it originally made a single
+terminal call with no prose — so the panel was empty for exactly the path most
+answers take. It is now asked for one line on what it is checking, and the
+pipeline reports its lifecycle and its verdict. Measured:
+
+```text
+   8.1s  agent   [checker] running
+  13.6s  thought [checker] Checking that the $1,577 million figure comes from the FY2018 column…
+  13.6s  thought [checker] correct: The page's Consolidated Statement of Cash Flows shows "Purcha…
+  13.6s  agent   [checker] found
+```
+
 A `trace` is one of three real things: `thought` (text the model wrote of its own
 accord before a tool call), `tool` (the name, nothing else), `agent` (one agent's
 lifecycle — `running` → `found` / `partial` / `empty` / `failed`). The UI shows
@@ -191,6 +203,23 @@ those are wrong.
 Tracked in [`../PLAN.md`](../PLAN.md).
 
 ## What it costs
+
+Measured on the live stack, same question (`3M_2018_10K` FY2018 capex), before
+and after taking the router's model call off the critical path:
+
+| Stage | Before | After |
+|---|---:|---:|
+| routing | **25.6s** | **0.1s** |
+| decomposing | 0.0s | 0.0s |
+| retrieval + answer | 63.2s | 8.0s |
+| validation | 8.3s | 5.5s |
+| **total** | **97.2s** | **13.6s** |
+
+Routing was a full round trip to classify a message any of a few rules classify
+for free. The retrieval figure moved too, which is provider variance rather than
+a change — the same run measured 14.8s earlier in the day and 63s under load, so
+treat single measurements of provider latency with suspicion and the routing
+delta as the real one.
 
 | | Tier 1 | Tier 1+2 | Tier 3 |
 |---|---:|---:|---:|
