@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
 from analyst_copilot.config.settings import get_settings
-from analyst_copilot.llm.base import ChatClient
+from analyst_copilot.llm.base import ChatClient, ChatTurn, ToolCall
 
 
 class OpenAICompatibleChatClient(ChatClient):
@@ -60,4 +60,69 @@ class OpenAICompatibleChatClient(ChatClient):
         raise ValueError(
             f"Chat completion returned empty content (finish_reason={finish}). "
             "Increase qa_max_tokens if the model uses reasoning tokens."
+        )
+
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
+    def complete_with_tools(
+        self,
+        messages: List[dict],
+        tools: List[Dict[str, Any]],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        tool_choice: Optional[str] = "auto",
+    ) -> ChatTurn:
+        """
+        One turn of a tool-calling conversation.
+
+        Unlike `complete`, an empty `content` is a normal outcome here: a model
+        that decided to call a tool has nothing to say yet, and treating that as
+        an error would end every agent run on its first move.
+        """
+        request: Dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if tools:
+            request["tools"] = tools
+            if tool_choice:
+                request["tool_choice"] = tool_choice
+
+        response = self._client.chat.completions.create(**request)
+        choice = response.choices[0]
+        message = choice.message
+
+        calls = [
+            ToolCall(
+                id=call.id,
+                name=call.function.name,
+                arguments=call.function.arguments or "",
+            )
+            for call in (message.tool_calls or [])
+            if getattr(call, "function", None) is not None
+        ]
+
+        # Rebuilt by hand rather than passed through: providers differ on which
+        # extra fields they echo, and an unexpected key in the transcript is
+        # rejected on the next request.
+        assistant: Dict[str, Any] = {"role": "assistant", "content": message.content or ""}
+        if calls:
+            assistant["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments},
+                }
+                for call in calls
+            ]
+
+        return ChatTurn(
+            content=message.content or "",
+            tool_calls=calls,
+            finish_reason=choice.finish_reason or "",
+            message=assistant,
         )

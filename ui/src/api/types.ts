@@ -72,6 +72,58 @@ export type SegmentKind = 'page' | 'sheet' | 'table' | 'section'
 /** How a citation relates to the page the model named. See Evidence.location_match. */
 export type LocationMatch = 'exact' | 'adjusted' | 'relocated' | 'inferred'
 
+/**
+ * Which tier answered.
+ *
+ * `conversational` has nothing to cite — it was not a question about a
+ * document. Branch on this before `found`: a conversational reply is neither an
+ * evidenced answer nor a decline.
+ */
+export type AnswerMode = 'conversational' | 'fast' | 'deep'
+
+export type Intent = 'smalltalk' | 'capability' | 'document_question'
+
+/** One figure a computed answer was derived from, and where it was read. */
+export interface EvidenceInput {
+  label: string
+  value: string
+  doc_name: string
+  page: number | null
+  display_page: number | null
+}
+
+/** One sub-question of a compound question, answered and cited on its own. */
+export interface AnswerPart {
+  question: string
+  answer: string
+  found: boolean
+  mode: AnswerMode
+  evidence: Evidence | null
+  abstention_reason: string | null
+  computation: string
+  inputs: EvidenceInput[]
+}
+
+/** A progress milestone from POST /chat/stream. */
+export interface StageEvent {
+  stage:
+    | 'routing'
+    | 'decomposing'
+    | 'retrieving'
+    | 'reading'
+    | 'validating'
+    | 'escalating'
+    | 'deep_search'
+    | 'synthesizing'
+    | 'verifying'
+    | 'done'
+  detail: string
+  done?: number
+  total?: number
+  part?: number
+  part_total?: number
+}
+
 export interface CollectionDocumentInfo {
   doc_name: string
   source_file: string
@@ -166,6 +218,23 @@ export interface ChatResponse {
   user_message_id: string | null
   message_id: string | null
   latency_ms: number | null
+
+  /** Which tier answered. Check this before `found`. */
+  mode: AnswerMode
+  intent: Intent
+  /** Every place the answer can be checked — one per answered part. */
+  citations: Evidence[]
+  /** Set only when the question was split into several questions. */
+  parts: AnswerPart[]
+  /** The arithmetic behind a derived figure, re-evaluated during verification. */
+  computation: string
+  inputs: EvidenceInput[]
+  /** What the checking step concluded, and why. */
+  validation: string | null
+  /** Pages read by the deep path. 0 when it did not run. */
+  pages_read: number
+  /** Reader agents used by the deep path. 0 when it did not run. */
+  shards_run: number
 }
 
 export interface ConversationSummary {

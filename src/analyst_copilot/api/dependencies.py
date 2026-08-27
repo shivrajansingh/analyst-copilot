@@ -21,6 +21,7 @@ from analyst_copilot.api.filings import FilingService
 from analyst_copilot.api.jobs import IndexingJobManager
 from analyst_copilot.api.services.collections import CollectionApiService
 from analyst_copilot.api.services.conversations import ConversationService
+from analyst_copilot.agent import AnalystAgent
 from analyst_copilot.collections.indexer import CollectionIndexer
 from analyst_copilot.collections.searcher import CollectionSearcher
 from analyst_copilot.services.indexing import HybridFilingIndexer
@@ -71,6 +72,22 @@ def get_qa_service() -> QuestionAnsweringService:
         indexer=get_indexer(),
         collection_indexer=get_collection_indexer(),
         collection_searcher=get_collection_searcher(),
+    )
+
+
+@lru_cache
+def get_analyst_agent() -> AnalystAgent:
+    """
+    The harness, wired to the same QA service the fast path uses.
+
+    One per process so its collaborators — and the collection indexer's cache of
+    loaded indices — are shared across questions. Its chat client is created on
+    first use, so building this at startup costs nothing and never fails
+    because a provider is briefly unreachable.
+    """
+    return AnalystAgent(
+        qa_service=get_qa_service(),
+        collection_indexer=get_collection_indexer(),
     )
 
 
@@ -147,5 +164,6 @@ def reset_dependencies() -> None:
     get_collection_searcher.cache_clear()
     get_job_manager.cache_clear()
     get_qa_service.cache_clear()
+    get_analyst_agent.cache_clear()
     get_session_factory.cache_clear()
     get_conversation_service.cache_clear()

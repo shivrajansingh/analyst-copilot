@@ -75,6 +75,36 @@ class Settings(BaseSettings):
     qa_max_tokens: int = 4096
     not_found_message: str = "not found in this filing"
 
+    # Agent harness. The fast path above answers from the five pages retrieval
+    # chose; measured on the practice key it contains the gold page 58% of the
+    # time, so the rest is unanswerable without reading more of the document.
+    # The deep path removes that ceiling by reading every page -- expensive, so
+    # it runs only when the fast path could not produce an answer that survived
+    # validation.
+    agent_enabled: bool = True
+    # Second opinion on a fast-path answer, from a reader that did not write it.
+    agent_validate_answers: bool = True
+    agent_deep_search: bool = True
+    # Pages one reader agent is responsible for. Every page belongs to exactly
+    # one reader, so the readers together have read the whole document.
+    agent_pages_per_shard: int = 10
+    # Readers in flight at once. The bound is the provider's rate limit, not
+    # local CPU: readers spend all their time waiting on network calls.
+    agent_max_concurrency: int = 8
+    # Hard cap on readers for one question. 0 means no cap -- a 306-segment
+    # filing runs 31 readers. Set it only to bound cost, and note that a cap
+    # means the document was not fully read.
+    agent_max_shards: int = 0
+    agent_reader_max_iterations: int = 8
+    agent_synthesis_max_iterations: int = 10
+    agent_max_tokens: int = 4096
+    # Split a question that asks several things into parts, each researched and
+    # cited on its own.
+    agent_decompose: bool = True
+    agent_max_parts: int = 4
+    # Prior turns shown to the harness, so "and the year before?" resolves.
+    agent_history_turns: int = 6
+
     # How far a citation may be moved to land on the page that actually carries
     # the evidence. Two readings of the same document -- filed HTML vs the
     # filer's own PDF -- disagree by one or two pages on 15 of the 62 documents

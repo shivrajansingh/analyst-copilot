@@ -1,6 +1,7 @@
-import { ShieldCheck } from 'lucide-react'
+import { Layers, ShieldCheck } from 'lucide-react'
 import type { ChatResponse } from '@/api/types'
 import { CitationChip } from '@/components/evidence/CitationChip'
+import { Tooltip } from '@/components/ui/Tooltip'
 
 /**
  * A proven answer.
@@ -9,6 +10,9 @@ import { CitationChip } from '@/components/evidence/CitationChip'
  * separate from anything around it. Figures render in monospace with tabular
  * numerals — misreading 1,577 as 1.577 is the exact error this product exists
  * to prevent.
+ *
+ * A compound question carries one citation per part, because one citation
+ * cannot prove two claims.
  */
 export function AnswerCard({
   result,
@@ -19,6 +23,14 @@ export function AnswerCard({
   onOpenEvidence: () => void
   active?: boolean
 }) {
+  // `citations` is authoritative; `evidence` repeats the first of them for
+  // callers written against the single-answer shape.
+  const citations = result.citations.length > 0
+    ? result.citations
+    : result.evidence
+      ? [result.evidence]
+      : []
+
   return (
     <article className="relative overflow-hidden rounded-xl border border-line bg-surface shadow-card animate-fade-up">
       <span className="absolute inset-y-0 left-0 w-[3px] bg-verified" aria-hidden />
@@ -27,9 +39,21 @@ export function AnswerCard({
         <span className="text-2xs font-semibold uppercase tracking-wider text-ink-muted">
           Answer
         </span>
-        <span className="inline-flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wide text-verified">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          verified
+        <span className="flex items-center gap-2">
+          {result.mode === 'deep' && (
+            <Tooltip
+              label={`The first pass could not prove an answer, so all ${result.pages_read} pages were read by ${result.shards_run} agents.`}
+            >
+              <span className="inline-flex items-center gap-1 rounded-full bg-surface-sunken px-2 py-0.5 text-2xs font-medium uppercase tracking-wide text-ink-muted">
+                <Layers className="h-3 w-3" />
+                full read
+              </span>
+            </Tooltip>
+          )}
+          <span className="inline-flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wide text-verified">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            verified
+          </span>
         </span>
       </header>
 
@@ -38,15 +62,28 @@ export function AnswerCard({
           {result.answer}
         </p>
 
-        {result.evidence && (
-          <div className="mt-4">
-            <CitationChip
-              docName={result.evidence.doc_name}
-              label={result.evidence.label || `p.${result.evidence.display_page}`}
-              onClick={onOpenEvidence}
-              active={active}
-            />
+        {citations.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            {citations.map((citation, index) => (
+              <CitationChip
+                key={`${citation.doc_name}-${citation.page}-${index}`}
+                docName={citation.doc_name}
+                label={citation.label || `p.${citation.display_page}`}
+                onClick={onOpenEvidence}
+                active={active}
+              />
+            ))}
           </div>
+        )}
+
+        {/* A part that could not be proved is stated as such rather than
+            quietly dropped: a half-answered question the reader thinks was
+            fully answered is worse than one they know was not. */}
+        {result.parts.some((part) => !part.found) && (
+          <p className="mt-3 border-t border-line/70 pt-3 text-2xs leading-relaxed text-declined">
+            {result.parts.filter((part) => !part.found).length} of {result.parts.length} parts
+            could not be answered from this filing.
+          </p>
         )}
       </div>
     </article>

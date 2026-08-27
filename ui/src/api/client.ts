@@ -86,6 +86,31 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, code, message)
 }
 
+/**
+ * A streaming POST, for `text/event-stream` endpoints.
+ *
+ * Returns the raw `Response` so the caller can read the body incrementally.
+ * Auth and error mapping stay here so no endpoint has to reimplement them —
+ * a non-2xx still arrives as an `ApiError`, before a single event is read.
+ *
+ * This is a POST rather than a GET, so `EventSource` cannot be used: the
+ * request carries a body.
+ */
+async function stream(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' })
+  if (authToken) headers.set('Authorization', `Bearer ${authToken}`)
+
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!response.ok) throw await toApiError(response)
+  if (!response.body) throw new ApiError(500, 'no_stream', 'The server sent no stream to read.')
+  return response
+}
+
 export const api = {
   get: <T,>(path: string) => request<T>(path, { method: 'GET' }),
   post: <T,>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
@@ -93,4 +118,5 @@ export const api = {
   delete: <T,>(path: string) => request<T>(path, { method: 'DELETE' }),
   upload: <T,>(path: string, form: FormData) =>
     request<T>(path, { method: 'POST', raw: form }),
+  stream,
 }

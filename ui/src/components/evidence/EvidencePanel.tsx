@@ -3,6 +3,7 @@ import { FileSearch } from 'lucide-react'
 import type { ChatResponse, RetrievedPage } from '@/api/types'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { CitedPage } from './CitedPage'
+import { DerivationTrail } from './DerivationTrail'
 import { PageViewerModal } from './PageViewerModal'
 import { RetrievalTrace } from './RetrievalTrace'
 import { VerificationStrip } from './VerificationStrip'
@@ -37,6 +38,14 @@ export function EvidencePanel({ result }: { result: ChatResponse | null }) {
           Searched {result.searched_documents} document
           {result.searched_documents === 1 ? '' : 's'} in{' '}
           <span className="text-ink-muted">{result.collection}</span>
+          {result.mode === 'deep' && result.pages_read > 0 && (
+            <>
+              {' · '}
+              <span className="text-ink-muted">
+                {result.pages_read} pages read in full
+              </span>
+            </>
+          )}
         </p>
       )}
       {result.found && result.evidence ? (
@@ -46,8 +55,9 @@ export function EvidencePanel({ result }: { result: ChatResponse | null }) {
             collection={result.collection}
             onOpenFull={citedHit ? () => setOpenHit(citedHit) : undefined}
           />
+          <DerivationTrail computation={result.computation} inputs={result.inputs} />
           <RetrievalTrace retrieval={result.retrieval} onOpenPage={setOpenHit} />
-          <VerificationStrip />
+          <VerificationStrip derived={Boolean(result.computation)} mode={result.mode} />
         </div>
       ) : (
         <div className="animate-fade-up">

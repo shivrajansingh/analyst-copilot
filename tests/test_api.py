@@ -11,7 +11,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from analyst_copilot.api.config import ApiSettings, get_api_settings
+from analyst_copilot.agent.validator import Verdict
 from analyst_copilot.api.dependencies import (
+    get_analyst_agent,
+    get_collection_indexer,
     get_filing_service,
     get_indexer,
     get_job_manager,
@@ -28,6 +31,8 @@ from analyst_copilot.retrieval.models import (
     VectorIndexMetadata,
 )
 from analyst_copilot.services.qa.models import NOT_FOUND_MESSAGE, QAAnswer
+
+from offline_harness import StubCollections, StubDeepSearch, StubValidator, build_agent
 
 API = "/api/v1"
 INDEXED = "3M_2018_10K"
@@ -161,6 +166,14 @@ def client(tmp_path, monkeypatch):
     app.dependency_overrides[get_indexer] = lambda: indexer
     app.dependency_overrides[get_job_manager] = lambda: jobs
     app.dependency_overrides[get_qa_service] = FakeQA
+
+    qa = FakeQA()
+    validator = StubValidator()
+    deep = StubDeepSearch()
+    app.dependency_overrides[get_collection_indexer] = lambda: StubCollections([INDEXED])
+    app.dependency_overrides[get_analyst_agent] = lambda: build_agent(
+        qa, validator=validator, deep=deep, ready_documents=[INDEXED]
+    )
     app.dependency_overrides[get_filing_service] = lambda: FilingService(
         settings=settings,
         indexer=indexer,
@@ -173,6 +186,9 @@ def client(tmp_path, monkeypatch):
         test_client.indexer = indexer
         test_client.jobs = jobs
         test_client.stores = (bm25_store, vector_store)
+        test_client.validator = validator
+        test_client.deep = deep
+        test_client.app = app
         yield test_client
     jobs.shutdown(wait=True)
 
@@ -304,6 +320,7 @@ def test_chat_returns_the_answer_with_its_evidence(client):
 
 
 def test_chat_declines_with_200_not_an_error(client):
+    """A decline that survived both tiers is still a 200, never an error."""
     response = client.post(
         f"{API}/chat", json={"doc_name": INDEXED, "question": "What is the unknown figure?"}
     )
@@ -312,7 +329,57 @@ def test_chat_declines_with_200_not_an_error(client):
     assert body["found"] is False
     assert body["answer"] == NOT_FOUND_MESSAGE
     assert body["evidence"] is None
-    assert body["abstention_reason"] == "model_abstain"
+    # The fast path abstained, so the deep path ran and also found nothing. The
+    # reason names the tier that gave up last, which is the more useful one.
+    assert body["abstention_reason"] == "deep_search_found_nothing"
+    assert body["mode"] == "deep"
+    assert client.deep.calls == ["What is the unknown figure?"]
+
+
+def test_a_fast_answer_that_validates_is_served_without_deep_search(client):
+    """Tier 3 costs ~50x tier 1, so it must not run when tier 1 was believed."""
+    response = client.post(
+        f"{API}/chat", json={"doc_name": INDEXED, "question": "What is FY2018 capex?"}
+    )
+    assert response.json()["mode"] == "fast"
+    assert client.deep.calls == []
+    assert client.validator.calls, "the fast answer should have been validated"
+
+
+def test_a_fast_answer_that_fails_validation_escalates(client):
+    """The validator is the gate: an answer it doubts must not be served."""
+    client.app.dependency_overrides[get_analyst_agent] = lambda: build_agent(
+        FakeQA(),
+        validator=StubValidator(Verdict.INCORRECT, "wrong fiscal year"),
+        deep=client.deep,
+        ready_documents=[INDEXED],
+    )
+    response = client.post(
+        f"{API}/chat", json={"doc_name": INDEXED, "question": "What is FY2018 capex?"}
+    )
+    body = response.json()
+    assert client.deep.calls == ["What is FY2018 capex?"]
+    assert body["found"] is False
+    assert body["mode"] == "deep"
+
+
+def test_a_greeting_is_answered_as_a_greeting(client):
+    """The product must not search a 10-K for the word 'hi'."""
+    response = client.post(f"{API}/chat", json={"doc_name": INDEXED, "question": "Hi"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "conversational"
+    assert body["intent"] == "smalltalk"
+    assert body["evidence"] is None
+    assert body["answer"] != NOT_FOUND_MESSAGE
+    assert client.deep.calls == []
+
+
+def test_a_greeting_works_even_with_nothing_indexed(client):
+    """Saying hello cannot require a finished index -- that is when people say it."""
+    response = client.post(f"{API}/chat", json={"doc_name": "NOT_ADDED", "question": "Hi"})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "conversational"
 
 
 def test_chat_on_an_unindexed_filing_is_409(client):
@@ -324,8 +391,61 @@ def test_chat_on_an_unindexed_filing_is_409(client):
 
 
 def test_chat_validates_the_request_body(client):
-    assert client.post(f"{API}/chat", json={"doc_name": INDEXED, "question": "hi"}).status_code == 422
+    assert client.post(f"{API}/chat", json={"doc_name": INDEXED, "question": ""}).status_code == 422
     assert client.post(f"{API}/chat", json={"question": "What is capex?"}).status_code == 422
+
+
+# --- streaming ------------------------------------------------------------- #
+def _events(raw: str):
+    """Parse an SSE body into (event, data) pairs."""
+    import json as _json
+
+    parsed = []
+    for block in raw.strip().split("\n\n"):
+        if not block.strip() or block.startswith(":"):
+            continue
+        name, data = "", ""
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                name = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = line[len("data: ") :]
+        if name:
+            parsed.append((name, _json.loads(data) if data else {}))
+    return parsed
+
+
+def test_chat_stream_reports_progress_then_the_answer(client):
+    response = client.post(
+        f"{API}/chat/stream",
+        json={"doc_name": INDEXED, "question": "What is FY2018 capex?"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    # nginx buffers proxied responses by default, which would hold every event
+    # until the answer arrived and defeat the endpoint entirely.
+    assert response.headers["x-accel-buffering"] == "no"
+
+    events = _events(response.text)
+    names = [name for name, _ in events]
+    assert "stage" in names
+    assert names[-1] == "answer", "the answer must be the last event"
+    assert names.count("answer") == 1
+
+    answer = events[-1][1]
+    assert answer["found"] is True
+    assert answer["evidence"]["page"] == 59
+    assert [stage["stage"] for _, stage in events if _ == "stage"][0] == "routing"
+
+
+def test_chat_stream_reports_an_error_as_an_event_not_a_broken_stream(client):
+    response = client.post(
+        f"{API}/chat/stream", json={"doc_name": "NOT_ADDED", "question": "What is capex?"}
+    )
+    assert response.status_code == 200
+    events = _events(response.text)
+    assert events[-1][0] == "error"
+    assert events[-1][1]["code"] == "filing_not_indexed"
 
 
 def test_page_endpoint_returns_text_and_the_embedding_boundary(client, monkeypatch):

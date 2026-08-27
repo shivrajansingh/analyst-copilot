@@ -17,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from analyst_copilot.api.config import ApiSettings, get_api_settings
 from analyst_copilot.api.db.models import Base
 from analyst_copilot.api.dependencies import (
+    get_analyst_agent,
     get_conversation_service,
     get_filing_service,
     get_indexer,
@@ -31,6 +32,8 @@ from analyst_copilot.api.services.conversations import ConversationService
 from analyst_copilot.parsing.models import Page
 from analyst_copilot.retrieval.models import ScoredPage, SearchResult
 from analyst_copilot.services.qa.models import NOT_FOUND_MESSAGE, QAAnswer
+
+from offline_harness import StubDeepSearch, build_agent
 
 API = "/api/v1"
 INDEXED = "3M_2018_10K"
@@ -110,6 +113,12 @@ def client(tmp_path, monkeypatch):
     app.dependency_overrides[get_indexer] = lambda: indexer
     app.dependency_overrides[get_job_manager] = lambda: jobs
     app.dependency_overrides[get_qa_service] = FakeQA
+    # The harness is the brain behind /chat, so these tests need it too. Its
+    # model-calling parts are stubbed; tier 1 is still the FakeQA above.
+    deep = StubDeepSearch()
+    app.dependency_overrides[get_analyst_agent] = lambda: build_agent(
+        FakeQA(), deep=deep, ready_documents=[INDEXED]
+    )
     app.dependency_overrides[get_filing_service] = lambda: FilingService(
         settings=settings, indexer=indexer, jobs=jobs
     )

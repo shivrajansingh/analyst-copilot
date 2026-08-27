@@ -31,6 +31,10 @@ build/
 # to repopulate it from the challenge zip before the tests, `index_all.py` or
 # the eval scripts can run.
 filings/
+# ...including when it is a symlink into wherever the corpus actually lives.
+# `filings/` with a trailing slash matches a directory only, and a fresh clone
+# that symlinks the corpus in would otherwise see it as an untracked file.
+/filings
 
 # Generated indices, embeddings and per-page Markdown. Hours of embedding, all
 # of it reproducible from filings/ by `scripts/index_all.py`.

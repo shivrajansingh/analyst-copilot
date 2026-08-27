@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, MessageSquare, PanelRightClose, PanelRightOpen } from 'lucide-react'
-import type { ChatResponse } from '@/api/types'
+import type { ChatResponse, StageEvent } from '@/api/types'
 import { ApiError } from '@/api/client'
 import { chatApi } from '@/api/endpoints/chat'
 import { useSearchableCollections } from '@/hooks/useCollections'
-import { useConversationStore, type Message } from '@/stores/conversations.store'
+import { useConversationStore } from '@/stores/conversations.store'
 import { useUiStore } from '@/stores/ui.store'
 import { AnswerCard } from '@/components/chat/AnswerCard'
+import { ChatBubble } from '@/components/chat/ChatBubble'
 import { Composer } from '@/components/chat/Composer'
 import { DeclineCard } from '@/components/chat/DeclineCard'
 import { FilingPicker } from '@/components/chat/FilingPicker'
@@ -29,6 +30,9 @@ export function ChatPage() {
 
   const [draftFiling, setDraftFiling] = useState<string | null>(searchParams.get('filing'))
   const [busy, setBusy] = useState(false)
+  // The live stage from the streaming endpoint. Reading a whole filing takes a
+  // minute, and a minute of silence reads as a hang.
+  const [stage, setStage] = useState<StageEvent | null>(null)
   const [threadError, setThreadError] = useState<string | null>(null)
   const [activeEvidence, setActiveEvidence] = useState<ChatResponse | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -54,7 +58,9 @@ export function ChatPage() {
   // Show the most recent result unless the reader has pinned an older one.
   const shownEvidence = useMemo(() => {
     if (activeEvidence) return activeEvidence
-    const last = [...messages].reverse().find((message) => message.result)
+    const last = [...messages]
+      .reverse()
+      .find((message) => message.result && message.result.mode !== 'conversational')
     return last?.result ?? null
   }, [activeEvidence, messages])
 
@@ -83,51 +89,55 @@ export function ChatPage() {
         )
       }
     }
-    if (!target) {
-      setBusy(true)
-      try {
-        const result = await chatApi.askFiling(filingName, question)
-        setActiveEvidence(result)
-      } finally {
-        setBusy(false)
-      }
-      return
-    }
 
-    const asked: Message = {
-      id: `m_${Date.now()}`,
-      role: 'user',
-      content: question,
-      created_at: new Date().toISOString(),
-    }
-    store.appendLocal(target.id, asked)
-    setBusy(true)
-
-    try {
-      const result = await chatApi.askFiling(filingName, question, target.id)
+    if (target) {
       store.appendLocal(target.id, {
-        id: `m_${Date.now()}_a`,
-        role: 'assistant',
-        content: result.answer,
+        id: `m_${Date.now()}`,
+        role: 'user',
+        content: question,
         created_at: new Date().toISOString(),
-        result,
       })
-      // Adopt the server's rows so a reload or a second tab shows the same
-      // message ids; optimistic local ids are only ever temporary.
-      await store.refresh(target.id)
-      setActiveEvidence(result)
+    }
+
+    setBusy(true)
+    setStage(null)
+    try {
+      const result = await chatApi.streamFiling(filingName, question, {
+        conversationId: target?.id,
+        onStage: setStage,
+      })
+      if (target) {
+        store.appendLocal(target.id, {
+          id: `m_${Date.now()}_a`,
+          role: 'assistant',
+          content: result.answer,
+          created_at: new Date().toISOString(),
+          result,
+        })
+        // Adopt the server's rows so a reload or a second tab shows the same
+        // message ids; optimistic local ids are only ever temporary.
+        await store.refresh(target.id)
+      }
+      // A conversational reply cites nothing, so it must not replace the
+      // evidence a previous answer put in the rail.
+      if (result.mode !== 'conversational') setActiveEvidence(result)
     } catch (caught) {
       const message =
         caught instanceof ApiError ? caught.message : 'The request could not be completed.'
-      store.appendLocal(target.id, {
-        id: `m_${Date.now()}_e`,
-        role: 'assistant',
-        content: message,
-        created_at: new Date().toISOString(),
-        error: message,
-      })
+      if (target) {
+        store.appendLocal(target.id, {
+          id: `m_${Date.now()}_e`,
+          role: 'assistant',
+          content: message,
+          created_at: new Date().toISOString(),
+          error: message,
+        })
+      } else {
+        setThreadError(message)
+      }
     } finally {
       setBusy(false)
+      setStage(null)
     }
   }
 
@@ -199,6 +209,8 @@ export function ChatPage() {
                     <p className="mt-0.5 text-xs text-ink-muted">{message.error}</p>
                   </div>
                 </div>
+              ) : message.result?.mode === 'conversational' ? (
+                <ChatBubble key={message.id} text={message.content} />
               ) : message.result?.found ? (
                 <AnswerCard
                   key={message.id}
@@ -215,7 +227,7 @@ export function ChatPage() {
               ),
             )}
 
-            {busy && <ThinkingIndicator />}
+            {busy && <ThinkingIndicator stage={stage} />}
             <div ref={bottomRef} />
           </div>
         </div>

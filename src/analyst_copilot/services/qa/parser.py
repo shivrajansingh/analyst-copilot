@@ -12,7 +12,7 @@ _FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORE
 
 
 def parse_llm_extraction(raw_text: str) -> LLMExtraction:
-    payload = _load_json_object(raw_text)
+    payload = load_json_object(raw_text)
     if payload is None:
         return LLMExtraction(not_found=True, raw_text=raw_text)
 
@@ -41,7 +41,7 @@ def parse_llm_extraction(raw_text: str) -> LLMExtraction:
     )
 
 
-def _load_json_object(raw_text: str) -> Optional[Dict[str, Any]]:
+def load_json_object(raw_text: str) -> Optional[Dict[str, Any]]:
     text = raw_text.strip()
     fenced = _FENCE_PATTERN.search(text)
     if fenced:
@@ -82,3 +82,8 @@ def _optional_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# The harness's classifiers ask for JSON from the same models, and they hit the
+# same fenced-and-prefaced replies this parser already tolerates.
+_load_json_object = load_json_object

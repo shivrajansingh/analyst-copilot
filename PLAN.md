@@ -29,12 +29,24 @@ A chatbot that answers analyst questions over one SEC filing at a time, with a *
 | Page-aligned citations | Done | Page-break split now matches `<hr>`/`<p>`/`<div>`; citations use 0-based `page_index` |
 | Index invalidation | Done | `PARSER_VERSION` stamped in index metadata; stale indices rebuild automatically |
 | Rubric scorer | Done | `scripts/eval/score.py` grades +1 / 0 / −1 against the practice key |
+| Chat UI + "Add filing" | Done | React app in `ui/`, per-document job progress, evidence rail |
+| HTTP API | Done | Filings, folders, chat, streaming chat, conversations |
+| Chat history | Done | Postgres via Alembic; `db`/`migrate`/`api`/`ui` compose stack |
+| Multi-format intake | Done | PDF/HTML/Word/Excel/CSV/Markdown, upload or by URL |
+| **Agent harness** | Done | Route → split → tier 1 → validate → whole-document deep search |
+| **Conversational replies** | Done | "Hi" is answered as a greeting, not searched for in a 10-K |
+| **Derived-answer verification** | Done | A computed figure is proven through its inputs, not by appearing on a page |
 
 Docs for completed work live in [`docs/`](docs/README.md).
 
 ---
 
 ## Measured baseline
+
+> **This baseline is tier 1 only.** It was measured before the agent harness
+> existed and is kept as the number the harness must be compared against, not as
+> a description of what the system now does. Re-baselining is item 1 under
+> Remaining.
 
 Same 10 questions (4 filings), before and after the parsing/citation fixes.
 Prose answers graded with `score.py --judge`.
@@ -75,69 +87,74 @@ PYTHONPATH=src python scripts/eval/score.py --results data/eval-after-fix.json -
 
 ## Remaining (required for the product)
 
-### 1. Chat UI + “Add filing”
+### 1. Re-baseline the harness on all 136 questions
 
-**What:** Product, not a CLI. Upload a new HTML filing, show processing status (≤ 10 minutes), then chat.
+**What:** the standing number is **+7 over all 136 questions** (29 correct with
+location, 62 abstentions, 23 correct-answer-wrong-page, 22 confidently wrong),
+measured with tier 1 alone. Every claim about the harness has to be measured
+against it on the same questions, with the −1 column watched at least as closely
+as the +1 column.
 
-**How to complete:**
-1. Backend API (FastAPI): `POST /filings` (upload + index), `GET /filings/{id}/status`, `POST /chat`.
-2. Store job status: queued → parsing → embedding → ready / failed.
-3. UI (Streamlit or simple HTML): filing selector, upload control, chat box, evidence (doc name + page + snippet).
-4. Scope chat to **one selected filing** per question.
+```bash
+PYTHONPATH=src python scripts/eval/run_practice.py --fast-only --output data/eval-fast-136.json
+PYTHONPATH=src python scripts/eval/run_practice.py              --output data/eval-harness-136.json
+PYTHONPATH=src python scripts/eval/score.py --results data/eval-harness-136.json --judge
+```
 
-### 2. Retrieval and evidence-window fixes (measured, not yet fixed)
+The runner prints which tier answered each question, so a score change can be
+attributed rather than assumed. Two things to check specifically:
 
-Diagnosed on 10 questions across 4 filings by checking whether the gold page is
-in the retrieved set at all. Both items are measured, neither is fixed.
+- **Did the deep path convert abstentions into −1s?** It removes the recall
+  ceiling, and a wrong answer costs twice what an abstention does. The
+  deterministic verifier is what should prevent this; the eval is what proves it.
+- **Did tier 2 escalate answers that were already right?** Every false
+  `incorrect` costs a ~60s search for no gain.
 
-**2a. Hybrid fusion is worse than its own parts.** Gold-page recall@5:
-vector 5/10, BM25 4/10, **hybrid 3/10**. Regressions: net-PP&E vector #1 →
-hybrid #20; capital-intensive vector #2 → hybrid #32; debt-securities BM25 #1 →
-hybrid #10.
+### 2. Scoring a compound question
 
-Cause: RRF with `hybrid_rrf_k = 60` over a candidate pool of 80 compresses the
-whole ranking into 1/61 … 1/140 — a 2.3× spread. RRF then behaves like a
-head-count of retrievers rather than a ranking, so consensus-at-rank-15 outranks
-confident-at-rank-1. `hybrid_rrf_weight = 0.6` lets that head-count outvote both
-retrievers' actual confidence.
+The practice key gives one gold page per question, and the harness now returns
+one citation *per part*. A two-part answer is scored against a single gold page,
+so `score.py` reads the primary citation and ignores the rest. That
+under-reports a correctly answered compound question. Either extend the scorer
+to accept any of an answer's citations, or record parts separately in the
+results file.
 
-Try: `hybrid_rrf_k` 10–20, or drop RRF and keep weighted fusion alone. Measure
-each against gold-page recall@5 before keeping it.
+### 3. Within-page chunking (still unfixed, now less load-bearing)
 
-**2b. Truncation discards the evidence.** `retrieval_max_chars_per_page = 2500`
-(embedding) and `qa_max_evidence_chars = 2200` (prompt). Gold evidence began at
-character 2587, 2587 and 2037 on three of the ten questions — past the cap. The
-clearest case: BM25 ranked the debt-securities gold page **#1** and the model
-still abstained, because the evidence sat at character 2587 of a 2200-character
-window.
+`retrieval_max_chars_per_page = 2500`; 73% of pages exceed it, and ~13% of gold
+evidence blocks begin past the cap. The extreme case is `3M_2023Q2_10Q` page 1:
+47,221 characters, of which 2,500 were embedded, with the gold evidence at
+character 45,234.
 
-Fix properly with within-page chunking (chunk after parse, cite the parent page)
-rather than by raising the caps — real pages still exceed them.
+The deep path is unaffected — readers read the Markdown store, in full — so this
+no longer caps what the system can answer, only what **tier 1** can answer
+cheaply. It is now a cost optimisation rather than a correctness fix: every
+question tier 1 could have answered from a whole page is a ~50× saving.
 
-**2c. `qa_min_retrieval_score = 0.25` is dead code.** `combine_fusion_scores`
-min-max normalises, so the top hit always scores ≥ 0.4. The gate can never fire.
-Either compare against a pre-normalisation score or delete it.
+Fix properly with within-page chunking (chunk after parse, cite the parent
+page), not by raising the cap — real pages exceed any safe cap.
 
-### 3. The verifier blocks derived answers by construction
+### 4. One-page approach note
 
-43 questions are "Numerical reasoning" and 34 gold records cite 2–3 evidence
-pages. The verifier requires every number in the answer to appear literally on
-the single cited page, so a computed figure (`24.26`, `1.9%`) can never verify —
-it appears nowhere in the filing.
+`README.md` is done. `APPROACH.md` is not, and it is explicitly graded: one page
+on what was tried, what was measured, what was kept and what was thrown away.
 
-This is the central tension: the verifier is the only thing standing between the
-system and −1, but as written it converts most computed answers into 0. Options
-to evaluate against the score: verify the *inputs* on cited pages instead of the
-output figure; allow multi-page citations; or keep abstaining on derived metrics
-and accept the ceiling.
+The material already exists and should be cited rather than re-argued:
 
-### 4. README + one-page approach note
+- RRF disabled after measurement — [docs/07](docs/07-hybrid-retrieval.md) has the
+  ablation table (+1 → +7).
+- Printed footer page numbers parsed and then **not** used, because they disagree
+  with gold in both directions — [docs/03](docs/03-html-parsing.md).
+- Evidence-first verification replacing exact-page matching — 15 of 62 documents
+  paginate differently between two readings of the same filing.
+- Shortlist fan-out rejected in favour of reading every page —
+  [docs/12](docs/12-multi-agent-retrieval.md) is the argument, and the departure
+  from it is stated at the top.
+- The statement-title boost, kept but **unproven**: it changed no outcome on the
+  136-question sweep.
 
-**What:** Submit runnable instructions and a one-page note (tried, measured, kept, thrown away).
-
-**How to complete:**
-1. Expand `README.md` with UI start commands and `.env` for **chat**.
-2. Write `APPROACH.md` (one page) after eval numbers exist.
+Write it once item 1's numbers exist, so the note reports a measurement rather
+than an intention.
 
 ---
 
@@ -154,27 +171,36 @@ and accept the ceiling.
 ## Suggested order for remaining work
 
 ```text
-1. Full eval: run_practice.py (all 136), then score.py --judge   <- baseline number
-2. Fix fusion (2a) and the evidence window (2b); re-score after each
-3. Revisit the verifier for derived answers (3)
-4. API + Add filing status + chat UI
-5. README + APPROACH.md
+1. Re-baseline: --fast-only and full harness over all 136, then score.py --judge
+2. Read the -1 column first. Tighten abstention before chasing +1s.
+3. Fix compound-question scoring (2) so the harness is not under-credited
+4. Within-page chunking (3) -- now a cost fix, not a correctness one
+5. APPROACH.md, from the numbers step 1 produces
 ```
 
-Parsing, citations, index invalidation and scoring are in place. Everything from
-step 2 on should be justified by a score delta, and each accepted or rejected
-change recorded for the approach note.
+Parsing, citations, index invalidation, scoring, the product surfaces and the
+harness are in place. Everything from here should be justified by a score delta,
+and each accepted or rejected change recorded for the approach note.
 
 ---
 
 ## Current architecture (completed layers)
 
 ```text
-Filing HTML
-    → parsing (pages + printed_page)
-    → BM25 index  +  vector index
-    → hybrid search (expand → retrieve → RRF/weighted → statement boost)
-    → LLM answer + verify / abstain
+Any supported document
+    → parsing (Markdown pages, one file per segment)
+    → BM25 index  +  vector index  +  Markdown store
+    │
+    message
+    → route (greeting / capability / question)
+    → split into one question per thing asked
+    │
+    ├─ TIER 1  hybrid search (expand → retrieve → weighted → boost) → LLM
+    ├─ TIER 2  a second reader checks it against the whole cited page
+    └─ TIER 3  every page read by ≤10-page reader agents → synthesis
+    │
+    → deterministic verification (direct figures, or a derivation's inputs)
+    → answer + citation, or "not found in this filing"
+    → API (chat, chat/stream) → React UI
     → eval runner + rubric scorer
-    → [remaining] UI + "Add filing"
 ```

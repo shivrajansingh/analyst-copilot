@@ -8,9 +8,38 @@ Question-answering over company filings, in whatever format the analyst has them
 
 ## What works today
 
-Parse a document — **PDF, HTML, Word, Excel, CSV or Markdown** — into Markdown pages, index with BM25 + embeddings, hybrid-search the right page, then ask the chat LLM. A verifier finds which retrieved page actually carries the evidence and cites *that* page, or returns **not found in this filing**. `scripts/eval/score.py` grades answers against the practice key on the challenge rubric.
+Parse a document — **PDF, HTML, Word, Excel, CSV or Markdown** — into Markdown
+pages, then answer questions about it at the cheapest tier that can prove
+itself:
 
-There is an HTTP API (add filing, status, chat) and a React UI in [`ui/`](ui/). The evidence window still truncates long pages — see [PLAN.md](PLAN.md).
+| | | |
+|---|---|---|
+| **Tier 1** | BM25 + embeddings → hybrid search → chat LLM → deterministic verifier | ~3s |
+| **Tier 2** | a second reader checks that answer against the **whole** cited page | ~15s |
+| **Tier 3** | every page of the filing read by parallel agents, then adjudicated | ~60s |
+
+Tier 1 can only answer from the five pages retrieval chose, and on the practice
+key that set holds the gold page **58%** of the time — so tier 3 exists to
+remove a ceiling no prompt can lift. It runs only when the cheap tiers cannot
+produce an answer that survives checking. Details:
+[docs/16-agent-harness.md](docs/16-agent-harness.md).
+
+Either way the answer is attached to a page whose own text supports it, or the
+system returns **not found in this filing**. `scripts/eval/score.py` grades
+answers against the practice key on the challenge rubric.
+
+**It also talks.** "Hi" gets a reply, not a search of a 10-K — every message is
+classified before anything is retrieved, and a greeting is answered as a
+greeting with nothing cited.
+
+**Computed answers are provable.** An operating margin appears nowhere in a
+filing; only the two figures behind it do. A derived figure is verified through
+its **inputs** — each traced to the page it was read from, with the arithmetic
+re-run exactly — so the 43 numerical-reasoning questions in the practice set are
+no longer unanswerable by construction.
+
+There is an HTTP API (add filing, status, chat, streaming chat) and a React UI
+in [`ui/`](ui/).
 
 ### Supported formats
 
@@ -50,6 +79,13 @@ large-documents-llm-system/
 │   ├── embeddings/           # OpenAI-compatible /v1/embeddings
 │   ├── llm/                  # OpenAI-compatible /v1/chat/completions
 │   ├── retrieval/            # BM25, vector, hybrid
+│   ├── agent/                # The harness: route, validate, deep-search
+│   │   ├── corpus.py         #   pages on disk, sharded ≤10 per reader
+│   │   ├── tools/            #   list/search/read/read_lines/calculate
+│   │   ├── reader.py         #   one agent, one slice, strict brief
+│   │   ├── orchestrator.py   #   fan out, then adjudicate
+│   │   ├── verification.py   #   proves a computed figure via its inputs
+│   │   └── pipeline.py       #   the three tiers
 │   └── services/
 │       ├── indexing/
 │       └── qa/               # Retrieve → LLM → verify / abstain
@@ -156,6 +192,7 @@ python scripts/serve_api.py          # http://127.0.0.1:8000, interactive docs a
 | `GET` | `/api/v1/filings/{doc_name}/status` | `queued → parsing → embedding → saving → ready` / `failed` |
 | `GET` | `/api/v1/filings` | Filings the service can answer from |
 | `POST` | `/api/v1/chat` | Ask one question of one **filing** (or one document) |
+| `POST` | `/api/v1/chat/stream` | The same answer, preceded by progress events (SSE) |
 | `GET` | `/api/v1/conversations` | The caller's chat threads, newest first |
 | `POST` | `/api/v1/conversations` | Start a thread (pinned to one filing) |
 | `GET` | `/api/v1/conversations/{id}` | A thread with all its messages |
@@ -228,9 +265,14 @@ PYTHONPATH=src python scripts/eval/run_practice.py --limit 5
 Produce answers (writes after every question, safe to interrupt):
 
 ```bash
-PYTHONPATH=src python scripts/eval/run_practice.py            # all 136
+PYTHONPATH=src python scripts/eval/run_practice.py                  # all 136, full harness
 PYTHONPATH=src python scripts/eval/run_practice.py --limit 10
+PYTHONPATH=src python scripts/eval/run_practice.py --fast-only      # tier 1 alone
 ```
+
+`--fast-only` runs the retrieval pipeline by itself. That is the +7 baseline, and
+it is what any harness gain has to be measured against — the runner prints which
+tier answered each question so a score change can be attributed.
 
 Grade them against the practice key using the challenge rubric
 (+1 correct answer *and* location, 0 abstain, 0 right answer wrong page, −1 confidently wrong):
@@ -248,12 +290,34 @@ Details: [docs/10-evaluation.md](docs/10-evaluation.md).
 PYTHONPATH=src pytest
 ```
 
-## QA pipeline
+## How a question is answered
 
-1. Hybrid retrieve top pages for the selected document.
-2. Prompt the chat model with those excerpts; require JSON (`answer`, `page`, `evidence_snippet`, or `not_found`).
-3. Verify, **evidence first**: score every retrieved page for whether it supports the answer — figures traced by significant digits, so a filing printed in millions still supports an answer given in billions — then cite the page that actually carries the evidence. The page the model named is a hint, not the answer.
-4. Otherwise abstain: **not found in this filing**.
+1. **Route.** Greeting, question about the assistant, or question about the
+   document? Common greetings match literally and cost no model call. On any
+   doubt the message is treated as a document question — answering a real
+   question from nothing is the worse error.
+2. **Split.** A message asking several things becomes several questions, each
+   retrieved, answered and **cited separately**. Composition is done in code, so
+   no figure is rewritten after it was verified.
+3. **Tier 1.** Hybrid retrieve the top pages, prompt the chat model for JSON
+   (`answer`, `page`, `evidence_snippet`, or `not_found`), then verify
+   **evidence first**: score every retrieved page for whether it supports the
+   answer — figures traced by significant digits, so a filing printed in
+   millions still supports an answer given in billions — and cite the page that
+   actually carries the evidence. The page the model named is a hint.
+4. **Tier 2.** A reader that did not write the answer sees the question, the
+   answer and the *whole* cited page, and rules `correct` / `incorrect` /
+   `insufficient`. This catches what digit-tracing cannot: the right figure for
+   the wrong fiscal year, a segment instead of the consolidated total, half of a
+   compound question.
+5. **Tier 3.** If tier 1 abstained or tier 2 doubted it, the filing is sharded
+   into slices of ten pages, one reader agent per slice, eight at a time. Readers
+   may read **only** their own pages — so together they have read the whole
+   document and no two can report the same page. A synthesis agent then
+   adjudicates the candidates on authority, not on which figure looks nicest.
+6. **Verify, always.** The deterministic verifier is the last word on both
+   answering tiers. Agents propose; it disposes.
+7. **Otherwise abstain:** **not found in this filing**.
 
 ### Flexible location, strict evidence
 

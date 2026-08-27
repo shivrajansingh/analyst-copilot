@@ -1,6 +1,18 @@
 # Multi-agent parallel retrieval — assessment and recommendation
 
-**Status:** recommendation only. Nothing in this document is implemented.
+**Status:** implemented, with one deliberate departure. See
+[Agent harness](16-agent-harness.md) for what was built. This document is kept
+as the analysis that argued for it, and it is worth reading first because the
+failure mode in §4 is the one the built system spends most of its design on.
+
+**What changed in the build:** §5 recommended fanning out over a *shortlist*
+sized from an unmeasured recall curve. The shipped harness fans out over **every
+page**, because the shortlist was the thing capping the score in the first place
+— and the precision risk §4 warns about is handled where this document said it
+would have to be, in synthesis plus a deterministic verifier, with the addition
+that readers are given non-overlapping slices so duplicate candidates are always
+genuinely different pages.
+
 **Question:** should the single QA call be replaced by many agents reading the
 document's Markdown pages in parallel, with a synthesis agent combining them?
 

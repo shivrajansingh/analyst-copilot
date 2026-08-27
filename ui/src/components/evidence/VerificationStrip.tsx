@@ -23,7 +23,35 @@ const CHECKS = [
   },
 ]
 
-export function VerificationStrip() {
+export function VerificationStrip({
+  derived = false,
+  mode = 'fast',
+}: {
+  /** A computed figure is proven through its inputs, not by appearing on a page. */
+  derived?: boolean
+  mode?: 'conversational' | 'fast' | 'deep'
+}) {
+  const checks = [
+    derived
+      ? {
+          label: 'Every input traces to the page it was read from',
+          detail:
+            'the answer is computed, so its inputs were checked instead of the result, and the arithmetic was re-run exactly',
+        }
+      : CHECKS[0],
+    CHECKS[1],
+    CHECKS[2],
+    ...(mode === 'deep'
+      ? [
+          {
+            label: 'Every page of the filing was read',
+            detail:
+              'the first pass could not prove an answer, so no page was left to a retrieval ranking',
+          },
+        ]
+      : []),
+  ]
+
   return (
     <section className="border-t border-line px-4 py-4">
       <h3 className="mb-3 flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
@@ -31,7 +59,7 @@ export function VerificationStrip() {
         Verification
       </h3>
       <ul className="space-y-2.5">
-        {CHECKS.map((check) => (
+        {checks.map((check) => (
           <li key={check.label} className="flex gap-2.5">
             <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-verified-soft">
               <Check className="h-2.5 w-2.5 text-verified" />
