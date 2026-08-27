@@ -42,6 +42,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
 
+from analyst_copilot.agent.cancellation import CancelToken, Cancelled, token_or_never
 from analyst_copilot.agent.conversation import ConversationResponder
 from analyst_copilot.agent.corpus import DocumentCorpus, DocumentUnavailable
 from analyst_copilot.agent.decompose import QuestionDecomposer
@@ -192,6 +193,7 @@ class AnalystAgent:
         on_stage: Optional[StageCallback] = None,
         scope_ready: Optional[bool] = None,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> AgentAnswer:
         """
         Answer one message.
@@ -201,10 +203,16 @@ class AnalystAgent:
         It is checked only for a document question, which is the point: a
         greeting is answered whether or not anything has finished indexing, and
         that is exactly the case where a user is most likely to type one.
+
+        `cancel` stops the run. It raises `Cancelled` out of this method rather
+        than returning an abstention, because "stopped" and "the filing does not
+        say" are different facts and only one of them is about the document.
         """
+        stop = token_or_never(cancel)
         context = format_history(history or [], limit=self._settings.agent_history_turns)
         scope = self._resolve_scope(collection, doc_name)
 
+        stop.raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.ROUTING, "reading the message"))
         routing = self._intents().route(message, context)
 
@@ -244,9 +252,12 @@ class AnalystAgent:
                 abstention_reason="no_indexed_documents",
             )
 
-        parts = self._plan(message, context, on_stage)
+        parts = self._plan(message, context, on_stage, stop)
         answered: List[AnswerPart] = []
         for number, part_question in enumerate(parts, start=1):
+            # Between sub-questions: a compound question is several runs' worth
+            # of work, and stopping during the second should not pay for a third.
+            stop.raise_if_cancelled()
             answered.append(
                 self._answer_part(
                     question=part_question,
@@ -256,6 +267,7 @@ class AnalystAgent:
                     part=number,
                     part_total=len(parts),
                     on_trace=on_trace,
+                    cancel=stop,
                 )
             )
 
@@ -268,9 +280,11 @@ class AnalystAgent:
         message: str,
         context: str,
         on_stage: Optional[StageCallback],
+        cancel: Optional[CancelToken] = None,
     ) -> List[str]:
         if not self._settings.agent_decompose:
             return [message]
+        token_or_never(cancel).raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.DECOMPOSING, "checking for multiple questions"))
         decomposition = self._splitter().split(message, context)
         if decomposition.split:
@@ -294,16 +308,19 @@ class AnalystAgent:
         part: int,
         part_total: int,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> AnswerPart:
+        stop = token_or_never(cancel)
         located = _locator(part, part_total)
 
+        stop.raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.RETRIEVING, "searching the filing", **located))
         fast = self._fast_path(question, scope)
         escalation = ""
 
         if fast is not None and fast.found:
             validation = self._validate(
-                question, fast, scope, on_stage, located, on_trace
+                question, fast, scope, on_stage, located, on_trace, stop
             )
             if validation.serves:
                 return AnswerPart(
@@ -324,16 +341,26 @@ class AnalystAgent:
         if not (self._settings.agent_deep_search and scope.corpus is not None):
             return _abstained(question, fast, escalation)
 
+        # The tier boundary worth guarding hardest: everything after this line
+        # is the sixty-second path, and none of it should begin for a run that
+        # has already been stopped.
+        stop.raise_if_cancelled()
         _emit(
             on_stage,
             StageEvent(Stage.ESCALATING, "reading the whole filing", **located),
         )
         return self._deep_path(
-            question, scope, context, on_stage, escalation, fast, located, on_trace
+            question, scope, context, on_stage, escalation, fast, located, on_trace, stop
         )
 
     def _fast_path(self, question: str, scope: Scope) -> Optional[QAAnswer]:
-        """Tier 1: the existing retrieve-and-verify pipeline, unchanged."""
+        """
+        Tier 1: the existing retrieve-and-verify pipeline, unchanged.
+
+        Uninterruptible once entered, and left that way deliberately: it is a
+        retrieval and a single model call, so the whole tier is shorter than the
+        one in-flight call a checkpoint inside it could save.
+        """
         try:
             if scope.collection:
                 return self._qa.answer_collection(question, scope.collection)
@@ -352,7 +379,9 @@ class AnalystAgent:
         on_stage: Optional[StageCallback],
         located: dict,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ):
+        stop = token_or_never(cancel)
         if not self._settings.agent_validate_answers:
             return _served("validation disabled")
         if scope.corpus is None:
@@ -373,6 +402,7 @@ class AnalystAgent:
             page_label=fast.location_label or "",
             evidence_snippet=fast.evidence_snippet,
             on_trace=on_trace,
+            cancel=stop,
         )
         _report_verdict(on_trace, validation)
         return validation
@@ -387,8 +417,10 @@ class AnalystAgent:
         fast: Optional[QAAnswer],
         located: dict,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> AnswerPart:
         """Tier 3: every page read, adjudicated, then deterministically verified."""
+        stop = token_or_never(cancel)
         corpus = scope.corpus
         assert corpus is not None  # guarded by the caller
 
@@ -403,7 +435,14 @@ class AnalystAgent:
                     else None
                 ),
                 on_trace=on_trace,
+                cancel=stop,
             )
+        except Cancelled:
+            # Not a failed search. The clause below turns failures into
+            # abstentions, and an abstention says the filing does not answer the
+            # question -- which nobody established, because nobody finished
+            # looking.
+            raise
         except Exception as exc:  # noqa: BLE001 - a failed deep search is an abstention
             logger.exception("deep search failed for %r", question[:60])
             return _abstained(question, fast, f"{escalation}; deep search failed: {exc}")
@@ -452,7 +491,7 @@ class AnalystAgent:
         # many. Measured on the practice key, those are what the deep path gets
         # wrong, and there is no tier after this one, so a doubt abstains.
         _emit(on_stage, StageEvent(Stage.VALIDATING, "checking the answer", **located))
-        validation = self._validate_deep(question, result, verdict, scope, on_trace)
+        validation = self._validate_deep(question, result, verdict, scope, on_trace, stop)
         if not validation.serves:
             logger.info(
                 "deep answer withheld for %r: %s", question[:60], validation.reason
@@ -483,6 +522,7 @@ class AnalystAgent:
         verdict,
         scope: Scope,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ):
         """
         Check a deep answer's meaning against the page it was cited to.
@@ -507,6 +547,7 @@ class AnalystAgent:
             computation=result.computation,
             inputs=result.inputs,
             on_trace=on_trace,
+            cancel=token_or_never(cancel),
         )
         _report_verdict(on_trace, validation)
         return validation

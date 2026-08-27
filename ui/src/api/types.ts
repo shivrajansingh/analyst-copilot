@@ -130,6 +130,32 @@ export interface TraceEvent {
 
 export type AgentStatus = NonNullable<TraceEvent['status']>
 
+/**
+ * The first event of POST /chat/stream, naming the run.
+ *
+ * It arrives before any work is reported, because a run that cannot be named
+ * cannot be stopped by anything but hanging up.
+ */
+export interface RunEvent {
+  run_id: string
+}
+
+/**
+ * The last event of a run the analyst stopped.
+ *
+ * Where it got to, and nothing else. There is no partial answer to carry and
+ * there never will be: the answer is withheld until it is verified, which is the
+ * same rule that keeps tokens from streaming.
+ */
+export interface CancelledEvent {
+  stage: StageEvent['stage'] | null
+  detail?: string | null
+  elapsed_ms: number
+  /** Readers finished and readers in total, when the deep path was running. */
+  done?: number
+  total?: number
+}
+
 /** A progress milestone from POST /chat/stream. */
 export interface StageEvent {
   stage:

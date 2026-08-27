@@ -21,4 +21,5 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Agent harness](16-agent-harness.md) | **Routing, validation and whole-document deep search** |
 | [Multi-agent retrieval](12-multi-agent-retrieval.md) | The assessment that led to the harness |
 | [Docker](15-docker.md) | **Running the stack**: api + ui containers, compose, nginx |
+| [Stopping a run](19-stopping-a-run.md) | **The stop button**: what it takes to stop work in a worker thread |
 | [Design system](18-design-system.md) | Colour tokens, accent themes, why colour means something |

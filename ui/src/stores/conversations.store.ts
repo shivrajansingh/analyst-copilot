@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatResponse, TraceEvent } from '@/api/types'
+import type { CancelledEvent, ChatResponse, TraceEvent } from '@/api/types'
 import { conversationsApi } from '@/api/endpoints/conversations'
 import { normalizeChatResponse } from '@/api/normalize'
 
@@ -12,6 +12,15 @@ export interface Message {
   result?: ChatResponse
   /** Present when the request itself failed, as distinct from a decline. */
   error?: string
+  /**
+   * Present when the analyst stopped this turn.
+   *
+   * Local only, and never persisted — the server does not record a cancelled
+   * exchange, because a run nobody finished proves nothing. A reload therefore
+   * shows the question without this marker, which is the truth: it was never
+   * answered.
+   */
+  stopped?: CancelledEvent
   /**
    * What the agents did while producing this answer.
    *

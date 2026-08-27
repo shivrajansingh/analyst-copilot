@@ -139,6 +139,9 @@ curl -N -X POST http://127.0.0.1:8000/api/v1/chat/stream \
 ```
 
 ```text
+event: run
+data: {"run_id":"run_9f2c1ab34d5e"}
+
 event: stage
 data: {"stage":"routing","detail":"reading the message"}
 
@@ -151,10 +154,12 @@ data: {"doc_name":"3M_2022_10K","found":true,"mode":"deep", ...}
 
 | Event | Payload | Notes |
 |---|---|---|
+| `run` | `{run_id}` | Exactly one, always **first**, before any work. Names the run so it can be stopped. |
 | `stage` | `{stage, detail, done?, total?, part?, part_total?}` | Milestones. A handful per answer. `done`/`total` only while readers are fanning out. |
 | `trace` | `{kind, agent?, text?, tool?, status?}` | The activity underneath. **Several hundred per answer.** |
 | `answer` | The full `ChatResponse` | Exactly one, and always last |
 | `error` | `{code, message}` | Instead of `answer`. The HTTP status is still `200` — the stream had already begun. |
+| `cancelled` | `{stage, detail, elapsed_ms, done?, total?}` | Instead of `answer`, when the run was stopped. Where it got to, and nothing more. |
 
 ### `trace` events
 
@@ -209,7 +214,47 @@ Three practical notes:
 - The response sets `X-Accel-Buffering: no`. Without it nginx would buffer the
   whole response and deliver every event at the end, which defeats the endpoint.
 - Closing the reader **cancels the work** rather than leaving a fan-out of
-  reader agents running for nobody.
+  reader agents running for nobody. See below for what that means.
+
+### Stop a run
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/chat/runs/run_9f2c1ab34d5e/cancel
+# 202 {"run_id":"run_9f2c1ab34d5e","status":"cancelling"}
+```
+
+The stream ends with a `cancelled` event:
+
+```text
+event: cancelled
+data: {"stage":"deep_search","detail":"reader 12: nothing here","elapsed_ms":13782,"done":12,"total":31}
+```
+
+**Accepted, not completed.** Cancellation is cooperative: the flag is checked
+before every model call, every tool call and every shard, so the calls already in
+flight finish and nothing new starts. The cost of a stop is therefore one
+in-flight call per *running* reader — the concurrency cap — rather than whatever
+the fan-out had left to do.
+
+It has to work this way. The pipeline runs in a worker thread that spawns a
+reader pool of its own, and nothing in `asyncio` can interrupt either: cancelling
+the task that awaits the answer abandons the *result* while the readers keep
+reading. What stops the work is the flag.
+
+Two ways to set it, and both are worth having:
+
+| | Latency | Why it exists |
+|---|---|---|
+| Hang up (close the reader / `AbortController`) | Instant, no round trip | The common case — a closed tab, a navigation, a stop button |
+| `POST /chat/runs/{run_id}/cancel` | One request | How fast a hang-up is noticed depends on proxy buffering, which the service does not control; and an analyst may stop a run from a different tab |
+
+A stopped run is **not persisted**: `record_exchange` never runs, so a thread
+never gains a question with no answer under it. There is no partial answer
+either, and there never will be — the answer is withheld until it is verified,
+which is the same rule that keeps tokens from streaming.
+
+`POST /chat` cannot be stopped. It has no channel to carry a stop and no run id
+to name one by; a caller that needs to stop uses `/chat/stream`.
 
 ## Errors
 
@@ -223,6 +268,7 @@ Every failure has the same shape:
 |---|---|---|
 | 400 | `invalid_filing_name` | Filename yields no usable name, or file is empty |
 | 404 | `filing_not_found` / `job_not_found` | Unknown filing or job |
+| 404 | `run_not_found` | Cancelling a run that has finished, never existed, or belongs to another user |
 | 409 | `filing_not_indexed` | A **document question** before the filing is ready. A greeting is still answered. |
 | 413 | `file_too_large` | Upload exceeds `API_MAX_UPLOAD_BYTES` |
 | 415 | `unsupported_file_type` | Not a supported document format |

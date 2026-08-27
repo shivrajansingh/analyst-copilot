@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stopping a run — interactive mock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* Tokens lifted verbatim from ui/src/styles/globals.css so the mock cannot
+   drift from the product it is proposing a change to. */
+:root{
+  --canvas:220 30% 98%; --surface:0 0% 100%; --surface-sunken:220 24% 96%;
+  --line:220 16% 90%; --line-strong:220 14% 82%;
+  --ink:222 30% 12%; --ink-muted:222 12% 40%; --ink-subtle:222 10% 55%;
+  --accent:215 28% 40%; --accent-soft:215 32% 94%; --accent-ink:0 0% 100%;
+  --verified:158 68% 32%; --verified-soft:158 60% 95%;
+  --declined:32 85% 40%; --declined-soft:38 92% 95%;
+  --failed:350 72% 45%; --failed-soft:350 88% 96%;
+  --building:205 88% 42%; --building-soft:205 92% 95%;
+  --shadow:222 40% 20%;
+}
+.dark{
+  --canvas:222 30% 7%; --surface:222 26% 10%; --surface-sunken:222 30% 6%;
+  --line:222 18% 20%; --line-strong:222 16% 30%;
+  --ink:220 24% 96%; --ink-muted:220 12% 68%; --ink-subtle:220 10% 52%;
+  --accent:213 32% 72%; --accent-soft:215 25% 22%; --accent-ink:220 35% 12%;
+  --verified:158 64% 52%; --verified-soft:158 50% 14%;
+  --declined:38 92% 62%; --declined-soft:36 60% 14%;
+  --failed:350 84% 66%; --failed-soft:350 50% 16%;
+  --building:205 92% 62%; --building-soft:205 60% 14%;
+  --shadow:222 60% 2%;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:Inter,ui-sans-serif,system-ui,sans-serif;
+  background:hsl(var(--canvas));color:hsl(var(--ink));
+  height:100vh;display:flex;flex-direction:column;font-size:14px;
+  -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+button:disabled{cursor:default}
+
+/* ---------- mock chrome (not part of the product) ---------- */
+.chrome{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px 16px;border-bottom:1px dashed hsl(var(--line-strong));
+  background:hsl(var(--surface-sunken));font-size:11.5px;color:hsl(var(--ink-muted));
+}
+.chrome b{color:hsl(var(--ink));font-weight:600;letter-spacing:.02em}
+.chrome .spacer{flex:1}
+.seg{display:flex;border:1px solid hsl(var(--line));border-radius:8px;overflow:hidden}
+.seg button{padding:4px 10px;font-size:11.5px;color:hsl(var(--ink-muted))}
+.seg button[aria-pressed="true"]{background:hsl(var(--accent));color:hsl(var(--accent-ink))}
+.ghost{border:1px solid hsl(var(--line));border-radius:8px;padding:4px 10px;font-size:11.5px}
+.ghost:hover{border-color:hsl(var(--accent)/.5);color:hsl(var(--ink))}
+
+/* ---------- layout ---------- */
+.shell{flex:1;display:flex;min-height:0}
+.chat{flex:1;display:flex;flex-direction:column;min-width:0}
+.head{
+  display:flex;align-items:center;gap:10px;padding:11px 16px;
+  border-bottom:1px solid hsl(var(--line));flex-shrink:0;
+}
+.filing{
+  display:flex;align-items:center;gap:8px;border:1px solid hsl(var(--line));
+  border-radius:10px;padding:7px 12px;background:hsl(var(--surface));font-size:13px;
+}
+.dot{width:6px;height:6px;border-radius:99px;background:hsl(var(--verified))}
+.stream{flex:1;overflow-y:auto;min-height:0}
+.stream-inner{max-width:720px;margin:0 auto;padding:24px 16px;display:flex;flex-direction:column;gap:18px}
+
+/* ---------- messages ---------- */
+.fade{animation:fade-up 220ms cubic-bezier(.22,1,.36,1) both}
+@keyframes fade-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.user{align-self:flex-end;max-width:85%;background:hsl(var(--accent));color:hsl(var(--accent-ink));
+  padding:10px 16px;border-radius:12px 12px 4px 12px;line-height:1.55}
+.card{border:1px solid hsl(var(--line));background:hsl(var(--surface));border-radius:12px;
+  box-shadow:0 1px 2px hsl(var(--shadow)/.06),0 8px 24px -12px hsl(var(--shadow)/.18)}
+.card-pad{padding:16px}
+.answer-top{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.04em;
+  text-transform:uppercase;color:hsl(var(--verified));font-weight:600}
+.answer-body{margin-top:10px;line-height:1.65}
+.cite{margin-top:12px;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
+  border:1px solid hsl(var(--verified)/.35);background:hsl(var(--verified-soft));
+  color:hsl(var(--verified));border-radius:99px;padding:4px 10px}
+
+/* ---------- the stopped card ---------- */
+.stopped{border:1px solid hsl(var(--line-strong));background:hsl(var(--surface));border-radius:12px;padding:16px}
+.stopped-top{display:flex;align-items:center;gap:8px;color:hsl(var(--ink-muted));
+  font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+.stopped-meta{margin-top:8px;font-size:12.5px;color:hsl(var(--ink-muted));line-height:1.6}
+.stopped-meta .mono{color:hsl(var(--ink));font-size:12px}
+.stopped-note{margin-top:8px;font-size:12.5px;color:hsl(var(--ink-subtle));line-height:1.6}
+.stopped-actions{margin-top:14px;display:flex;gap:8px}
+.pill{border:1px solid hsl(var(--line));border-radius:8px;padding:6px 12px;font-size:12px;
+  color:hsl(var(--ink-muted));transition:.15s}
+.pill:hover{border-color:hsl(var(--accent)/.5);color:hsl(var(--accent));background:hsl(var(--accent-soft))}
+
+/* ---------- thinking indicator ---------- */
+.think{border:1px solid hsl(var(--line));background:hsl(var(--surface));border-radius:12px;overflow:hidden}
+.think-head{display:flex;align-items:center;gap:10px;padding:14px 16px}
+.pulse{width:8px;height:8px;border-radius:99px;background:hsl(var(--accent));animation:breathe 1.8s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
+.stage-label{font-weight:500}
+.stage-detail{font-size:12px;color:hsl(var(--ink-subtle))}
+.elapsed{margin-left:auto;font-size:11.5px;color:hsl(var(--ink-subtle))}
+.bar{height:2px;background:hsl(var(--surface-sunken))}
+.bar span{display:block;height:100%;background:hsl(var(--accent));transition:width .3s ease}
+.agents{display:flex;flex-wrap:wrap;gap:5px;padding:12px 16px;border-top:1px solid hsl(var(--line))}
+.chip{font-size:10.5px;border-radius:6px;padding:3px 7px;border:1px solid hsl(var(--line));
+  color:hsl(var(--ink-subtle));font-family:"JetBrains Mono",monospace;transition:.2s}
+.chip.running{border-color:hsl(var(--accent)/.5);color:hsl(var(--accent));background:hsl(var(--accent-soft))}
+.chip.found{border-color:hsl(var(--verified)/.4);color:hsl(var(--verified));background:hsl(var(--verified-soft))}
+.chip.empty{opacity:.5}
+.chip.dropped{border-style:dashed;opacity:.45;text-decoration:line-through}
+.chip.aborted{border-color:hsl(var(--declined)/.45);color:hsl(var(--declined));background:hsl(var(--declined-soft))}
+.trail{border-top:1px solid hsl(var(--line));padding:10px 16px;max-height:132px;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:flex-end;gap:4px}
+.trace{font-size:11.5px;color:hsl(var(--ink-subtle));display:flex;gap:8px;line-height:1.5;
+  animation:slide-in 200ms cubic-bezier(.22,1,.36,1) both}
+@keyframes slide-in{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+.trace .who{font-family:"JetBrains Mono",monospace;color:hsl(var(--ink-muted));flex-shrink:0;width:76px}
+.trace .what{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---------- composer ---------- */
+.composer-wrap{border-top:1px solid hsl(var(--line));padding:16px;flex-shrink:0;background:hsl(var(--canvas))}
+.composer{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.suggestions{display:flex;gap:8px;flex-wrap:wrap}
+.suggestion{border:1px solid hsl(var(--line));background:hsl(var(--surface));border-radius:99px;
+  padding:6px 12px;font-size:12px;color:hsl(var(--ink-muted));transition:.15s}
+.suggestion:hover:not(:disabled){border-color:hsl(var(--accent)/.4);background:hsl(var(--accent-soft));color:hsl(var(--accent))}
+.suggestion:disabled{opacity:.45}
+.box{display:flex;align-items:flex-end;gap:8px;border:1px solid hsl(var(--line));
+  background:hsl(var(--surface));border-radius:12px;padding:8px;transition:.15s;
+  box-shadow:0 1px 2px hsl(var(--shadow)/.06)}
+.box:focus-within{border-color:hsl(var(--accent));box-shadow:0 0 0 3px hsl(var(--accent)/.18)}
+textarea{flex:1;resize:none;background:none;border:none;outline:none;color:hsl(var(--ink));
+  font:inherit;padding:8px;max-height:160px;line-height:1.5}
+textarea::placeholder{color:hsl(var(--ink-subtle))}
+/* The one slot. Send and Stop are the same button in two verbs. */
+#action{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:background .18s,color .18s,border-color .18s,width .18s}
+#action[data-state="idle"]{background:hsl(var(--accent));color:hsl(var(--accent-ink))}
+#action[data-state="idle"]:disabled{background:hsl(var(--surface-sunken));color:hsl(var(--ink-subtle))}
+#action[data-state="running"]{background:hsl(var(--failed-soft));color:hsl(var(--failed));
+  border:1px solid hsl(var(--failed)/.45)}
+#action[data-state="running"]:hover{background:hsl(var(--failed)/.18)}
+#action[data-state="stopping"]{width:104px;background:hsl(var(--surface-sunken));color:hsl(var(--ink-muted));
+  border:1px solid hsl(var(--line));gap:7px;font-size:12px}
+.spin{width:12px;height:12px;border:1.5px solid hsl(var(--ink-subtle));border-top-color:transparent;
+  border-radius:99px;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hint{font-size:11px;color:hsl(var(--ink-subtle));padding:0 4px;display:flex;gap:6px;align-items:center}
+kbd{font-family:"JetBrains Mono",monospace;font-size:10px;border:1px solid hsl(var(--line-strong));
+  border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:hsl(var(--ink-muted))}
+
+/* ---------- runtime panel ---------- */
+.runtime{width:360px;flex-shrink:0;border-left:1px solid hsl(var(--line));background:hsl(var(--surface));
+  display:flex;flex-direction:column;min-height:0}
+.runtime h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:hsl(var(--ink-muted));
+  font-weight:600;padding:14px 16px;border-bottom:1px solid hsl(var(--line))}
+.runtime .scroll{overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+.runtime p.lede{font-size:11.5px;color:hsl(var(--ink-subtle));line-height:1.6}
+.proc{border:1px solid hsl(var(--line));border-radius:10px;padding:10px 12px;display:flex;
+  align-items:center;gap:10px;transition:.25s}
+.proc .name{font-size:12px;font-family:"JetBrains Mono",monospace}
+.proc .sub{font-size:10.5px;color:hsl(var(--ink-subtle));margin-top:2px}
+.proc .state{margin-left:auto;font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:600}
+.proc[data-s="idle"]{opacity:.5}
+.proc[data-s="idle"] .state{color:hsl(var(--ink-subtle))}
+.proc[data-s="live"]{border-color:hsl(var(--accent)/.45);background:hsl(var(--accent-soft)/.5)}
+.proc[data-s="live"] .state{color:hsl(var(--accent))}
+.proc[data-s="signalled"]{border-color:hsl(var(--declined)/.5);background:hsl(var(--declined-soft))}
+.proc[data-s="signalled"] .state{color:hsl(var(--declined))}
+.proc[data-s="stopped"]{border-color:hsl(var(--line));opacity:.6}
+.proc[data-s="stopped"] .state{color:hsl(var(--ink-subtle))}
+.log{border-top:1px solid hsl(var(--line));padding:12px 16px;display:flex;flex-direction:column;gap:5px;
+  max-height:230px;overflow-y:auto}
+.log .row{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:hsl(var(--ink-subtle));
+  display:flex;gap:8px;line-height:1.5;animation:slide-in 180ms both}
+.log .row .t{color:hsl(var(--ink-subtle));opacity:.7;flex-shrink:0}
+.log .row.hot{color:hsl(var(--declined))}
+.log .row.cold{color:hsl(var(--verified))}
+.spend{display:flex;gap:10px}
+.metric{flex:1;border:1px solid hsl(var(--line));border-radius:10px;padding:9px 11px}
+.metric .k{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:hsl(var(--ink-subtle))}
+.metric .v{font-family:"JetBrains Mono",monospace;font-size:17px;margin-top:3px}
+.hidden{display:none !important}
+@media (max-width:1000px){.runtime{display:none}}
+</style>
+</head>
+<body>
+
+<div class="chrome">
+  <b>MOCK · Stopping a run</b>
+  <span>analyst-copilot · chat session</span>
+  <span class="spacer"></span>
+  <span>Scenario</span>
+  <div class="seg" id="scenario">
+    <button data-v="deep" aria-pressed="true">Deep search (~60s)</button>
+    <button data-v="fast" aria-pressed="false">Fast answer (~5s)</button>
+  </div>
+  <span>Speed</span>
+  <div class="seg" id="speed">
+    <button data-v="1" aria-pressed="true">1× (real time)</button>
+    <button data-v="4" aria-pressed="false">4×</button>
+    <button data-v="10" aria-pressed="false">10×</button>
+  </div>
+  <button class="ghost" id="toggle-runtime">Hide server view</button>
+  <button class="ghost" id="toggle-theme">Light</button>
+</div>
+
+<div class="shell">
+  <section class="chat">
+    <div class="head">
+      <div class="filing"><span class="dot"></span> 3M · <span class="mono">3 documents indexed</span></div>
+    </div>
+
+    <div class="stream"><div class="stream-inner" id="thread"></div></div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="suggestions" id="suggestions">
+          <button class="suggestion">What was capital expenditure this year?</button>
+          <button class="suggestion">What drove the change in operating margin?</button>
+          <button class="suggestion">What is total debt at year end?</button>
+        </div>
+        <form class="box" id="form">
+          <textarea id="input" rows="1" placeholder="Ask about 3M…" aria-label="Your question"></textarea>
+          <button id="action" type="submit" data-state="idle" disabled aria-label="Send question"></button>
+        </form>
+        <div class="hint" id="hint">
+          <span>Answers are checked against the filing before they appear.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="runtime" id="runtime">
+    <h2>What is actually running</h2>
+    <div class="scroll">
+      <p class="lede">
+        Stopping is only real if it reaches the innermost thread. Today the stream's
+        <span class="mono">task.cancel()</span> never touches the reader pool — this panel
+        is the proposed signal path, and what each part does when the token is set.
+      </p>
+      <div class="spend">
+        <div class="metric"><div class="k">LLM calls</div><div class="v" id="m-calls">0</div></div>
+        <div class="metric"><div class="k">Wasted after stop</div><div class="v" id="m-waste">0</div></div>
+      </div>
+      <div id="procs"></div>
+    </div>
+    <div class="log" id="log"></div>
+  </aside>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ *
+ * Icons
+ * ------------------------------------------------------------------ */
+const ARROW = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+const SQUARE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>';
+
+/* ------------------------------------------------------------------ *
+ * Elements + mock controls
+ * ------------------------------------------------------------------ */
+const el = (id) => document.getElementById(id);
+const thread = el('thread'), input = el('input'), action = el('action'),
+      form = el('form'), logBox = el('log'), procBox = el('procs'),
+      suggestions = el('suggestions');
+
+let SPEED = 1, SCENARIO = 'deep';
+const ms = (v) => v / SPEED;
+
+function seg(id, onPick){
+  el(id).addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    [...el(id).children].forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+    onPick(b.dataset.v);
+  });
+}
+seg('scenario', v => SCENARIO = v);
+seg('speed', v => SPEED = Number(v));
+el('toggle-theme').addEventListener('click', (e) => {
+  const dark = document.documentElement.classList.toggle('dark');
+  e.target.textContent = dark ? 'Light' : 'Dark';
+});
+el('toggle-runtime').addEventListener('click', (e) => {
+  const hidden = el('runtime').classList.toggle('hidden');
+  e.target.textContent = hidden ? 'Show server view' : 'Hide server view';
+});
+
+/* ------------------------------------------------------------------ *
+ * Runtime panel — the signal path, drawn
+ * ------------------------------------------------------------------ */
+const PROCS = [
+  {id:'sse',   name:'SSE /chat/stream',    sub:'the open connection'},
+  {id:'token', name:'CancelToken',         sub:'threading.Event, one per run'},
+  {id:'thread',name:'pipeline thread',     sub:'run_in_threadpool'},
+  {id:'pool',  name:'ThreadPoolExecutor',  sub:'reader fan-out'},
+  {id:'db',    name:'record_exchange',     sub:'persists the turn'},
+];
+procBox.innerHTML = PROCS.map(p => `
+  <div class="proc" id="p-${p.id}" data-s="idle" style="margin-bottom:8px">
+    <div><div class="name">${p.name}</div><div class="sub" id="sub-${p.id}">${p.sub}</div></div>
+    <div class="state" id="st-${p.id}">idle</div>
+  </div>`).join('');
+
+const setProc = (id, state, label, sub) => {
+  el('p-'+id).dataset.s = state;
+  el('st-'+id).textContent = label ?? state;
+  if (sub) el('sub-'+id).textContent = sub;
+};
+const resetProcs = () => PROCS.forEach(p => setProc(p.id, 'idle', 'idle', p.sub));
+
+let t0 = 0;
+function logLine(text, tone){
+  const row = document.createElement('div');
+  row.className = 'row' + (tone ? ' ' + tone : '');
+  const at = t0 ? ((performance.now() - t0) / 1000 * SPEED).toFixed(1) : '0.0';
+  row.innerHTML = `<span class="t">${at.padStart(5)}s</span><span>${text}</span>`;
+  logBox.appendChild(row);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+let calls = 0, wasted = 0;
+const bumpCalls = (n=1) => { calls += n; el('m-calls').textContent = calls; };
+const bumpWaste = (n=1) => { wasted += n; el('m-waste').textContent = wasted; };
+
+/* ------------------------------------------------------------------ *
+ * The run
+ * ------------------------------------------------------------------ */
+const STAGE_LABELS = {
+  routing:'Reading your message', decomposing:'Separating the questions',
+  retrieving:'Searching the filing', reading:'Reading the excerpts',
+  validating:'Checking the answer', escalating:'Not proven yet — reading the whole filing',
+  deep_search:'Reading every page', synthesizing:'Weighing what was found',
+  verifying:'Verifying the evidence',
+};
+const THOUGHTS = [
+  'capital expenditure is usually in the cash flow statement',
+  'this page is the segment note, not what was asked',
+  'purchases of property, plant and equipment — that is the line',
+  'the figure here is a nine-month total, not a full year',
+  'no capex on this page; moving on',
+  'cross-checking against the prior-year column',
+  'this is a subtotal, so it cannot be cited as the answer',
+];
+const TOOLS = ['read_page','search_filing','calculator','report_finding'];
+
+const SHARDS = 31, CONCURRENCY = 8;
+
+let run = null;          // the live run, or null
+let timers = [];
+const later = (fn, delay) => { const t = setTimeout(fn, ms(delay)); timers.push(t); return t; };
+const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+
+/* --- the thinking indicator --------------------------------------- */
+function mountIndicator(){
+  const node = document.createElement('div');
+  node.className = 'think fade';
+  node.innerHTML = `
+    <div class="think-head">
+      <span class="pulse"></span>
+      <div><div class="stage-label" id="s-label">Reading your message</div>
+           <div class="stage-detail" id="s-detail">routing</div></div>
+      <div class="elapsed mono" id="s-elapsed">0.0s</div>
+    </div>
+    <div class="bar"><span id="s-bar" style="width:4%"></span></div>
+    <div class="agents hidden" id="s-agents"></div>
+    <div class="trail hidden" id="s-trail"></div>`;
+  thread.appendChild(node);
+  node.scrollIntoView({behavior:'smooth', block:'end'});
+  return node;
+}
+
+function pushTrace(who, what){
+  const trail = el('s-trail'); if (!trail) return;
+  trail.classList.remove('hidden');
+  const row = document.createElement('div');
+  row.className = 'trace';
+  row.innerHTML = `<span class="who">${who}</span><span class="what">${what}</span>`;
+  trail.appendChild(row);
+  while (trail.children.length > 6) trail.removeChild(trail.firstChild);
+  run && run.traces.push(`${who} · ${what}`);
+}
+
+function setStage(stage, detail, pct){
+  if (!run) return;
+  run.stage = stage;
+  el('s-label').textContent = STAGE_LABELS[stage];
+  el('s-detail').textContent = detail;
+  el('s-bar').style.width = pct + '%';
+}
+
+/* --- starting -------------------------------------------------------- */
+function ask(question){
+  if (run) return;
+  suggestions.classList.add('hidden');
+
+  const bubble = document.createElement('div');
+  bubble.className = 'user fade';
+  bubble.textContent = question;
+  thread.appendChild(bubble);
+
+  run = {
+    question, stage:'routing', traces:[], shards:[], done:0,
+    node:mountIndicator(), started:performance.now(), cancelled:false, runId:null,
+  };
+  calls = 0; wasted = 0; el('m-calls').textContent = 0; el('m-waste').textContent = 0;
+  logBox.innerHTML = ''; resetProcs();
+  t0 = performance.now();
+
+  setState('running');
+
+  run.clock = setInterval(() => {
+    if (!run) return;
+    el('s-elapsed').textContent = elapsed().toFixed(1) + 's';
+  }, 100);
+
+  // The run id arrives before any work starts — the client cannot cancel
+  // something it cannot name.
+  run.runId = 'run_' + Math.random().toString(36).slice(2, 8);
+  setProc('sse', 'live', 'open', 'event: run · ' + run.runId);
+  setProc('token', 'live', 'armed', 'not set');
+  logLine('→ event: run  {"run_id":"' + run.runId + '"}');
+
+  later(() => {
+    setProc('thread','live','running','agent.answer(cancel=token)');
+    logLine('pipeline thread started');
+  }, 120);
+
+  SCENARIO === 'fast' ? scriptFast() : scriptDeep();
+}
+
+const elapsed = () => (performance.now() - run.started) / 1000 * SPEED;
+
+/* --- the fast path --------------------------------------------------- */
+function scriptFast(){
+  later(() => { setStage('routing','reading the message',6); bumpCalls(); }, 200);
+  later(() => setStage('retrieving','searching the filing',22), 900);
+  later(() => { setStage('reading','reading the excerpts',48); bumpCalls();
+    pushTrace('answerer','searching for capital expenditure'); }, 1600);
+  later(() => pushTrace('answerer', 'read_page( )'), 2400);
+  later(() => { setStage('validating','checking the answer',74); bumpCalls();
+    pushTrace('checker','the cited page carries the figure'); }, 3100);
+  later(() => setStage('verifying','checking the evidence',92), 4200);
+  later(() => finish('$1.577 billion', 'FY2022 10-K · page 62'), 5000);
+}
+
+/* --- the deep path --------------------------------------------------- */
+function scriptDeep(){
+  later(() => { setStage('routing','reading the message',3); }, 200);
+  later(() => { setStage('decomposing','checking for multiple questions',7); bumpCalls(); }, 800);
+  later(() => setStage('retrieving','searching the filing',12), 1600);
+  later(() => { setStage('reading','reading the excerpts',20); bumpCalls();
+    pushTrace('answerer','the retrieved pages are the segment note'); }, 2400);
+  later(() => { setStage('validating','checking the answer',26); bumpCalls();
+    pushTrace('checker','the figure does not answer what was asked'); }, 4200);
+  later(() => { setStage('escalating','tier 1 could not prove it',30);
+    pushTrace('','escalating to the deep path'); }, 5600);
+  later(startFanOut, 6600);
+}
+
+function startFanOut(){
+  if (!run) return;
+  setStage('deep_search', `0 of ${SHARDS} pages read`, 34);
+  const grid = el('s-agents');
+  grid.classList.remove('hidden');
+  grid.innerHTML = '';
+  for (let i = 1; i <= SHARDS; i++){
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = 'reader ' + i;
+    grid.appendChild(chip);
+    run.shards.push({i, chip, state:'queued'});
+  }
+  setProc('pool','live','8 running',`${CONCURRENCY} running · ${SHARDS - CONCURRENCY} queued`);
+  logLine(`fan-out: ${SHARDS} shards, ${CONCURRENCY} concurrent readers`);
+
+  for (let k = 0; k < CONCURRENCY; k++) startReader(run.shards[k], k * 120);
+  run.next = CONCURRENCY;
+}
+
+function startReader(shard, delay = 0){
+  later(() => {
+    if (!run || run.cancelled) return;
+    shard.state = 'running';
+    shard.chip.className = 'chip running';
+    bumpCalls();
+    later(() => run && !run.cancelled && shard.state === 'running' &&
+      pushTrace('reader ' + shard.i, THOUGHTS[shard.i % THOUGHTS.length]), 600 + Math.random()*800);
+    later(() => run && !run.cancelled && shard.state === 'running' &&
+      pushTrace('reader ' + shard.i, TOOLS[shard.i % TOOLS.length] + '( )'), 1400 + Math.random()*900);
+    later(() => finishReader(shard), 2200 + Math.random() * 2600);
+  }, delay);
+}
+
+function finishReader(shard){
+  if (!run || run.cancelled || shard.state !== 'running') return;
+  const found = shard.i === 19 || shard.i === 7;
+  shard.state = found ? 'found' : 'empty';
+  shard.chip.className = 'chip ' + shard.state;
+  run.done++;
+  setStage('deep_search', `${run.done} of ${SHARDS} pages read`, 34 + (run.done / SHARDS) * 48);
+  const running = run.shards.filter(s => s.state === 'running').length;
+  const queued  = run.shards.filter(s => s.state === 'queued').length;
+  setProc('pool','live',`${running} running`,`${running} running · ${queued} queued`);
+
+  if (run.next < SHARDS) startReader(run.shards[run.next++], 0);
+  else if (run.done === SHARDS){
+    later(() => { if (!run) return; setStage('synthesizing','weighing what was found',88); bumpCalls();
+      pushTrace('synthesis','two readers agree on page 62'); }, 400);
+    later(() => run && setStage('verifying','checking the evidence',96), 1800);
+    later(() => run && finish('$1.577 billion', 'FY2022 10-K · page 62'), 2900);
+  }
+}
+
+/* --- finishing ------------------------------------------------------- */
+function finish(answer, citation){
+  if (!run) return;
+  clearInterval(run.clock); clearTimers();
+  const secs = elapsed().toFixed(1);
+  run.node.remove();
+
+  const card = document.createElement('div');
+  card.className = 'card card-pad fade';
+  card.innerHTML = `
+    <div class="answer-top">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      Verified · ${secs}s
+    </div>
+    <div class="answer-body">Capital expenditure was <span class="mono">${answer}</span> in fiscal 2022,
+      reported as purchases of property, plant and equipment in the consolidated statement of cash flows.</div>
+    <div class="cite">${citation}</div>`;
+  thread.appendChild(card);
+  card.scrollIntoView({behavior:'smooth', block:'end'});
+
+  setProc('sse','stopped','closed','event: answer, then close');
+  setProc('token','stopped','never set','the analyst let it finish');
+  setProc('thread','stopped','returned','answer verified');
+  setProc('pool','stopped','shut down','all readers joined');
+  setProc('db','live','written','the turn is persisted');
+  logLine('→ event: answer', 'cold');
+
+  run = null;
+  setState('idle');
+}
+
+/* ------------------------------------------------------------------ *
+ * STOPPING — the point of the mock
+ * ------------------------------------------------------------------ */
+function stop(){
+  if (!run || run.cancelled) return;
+  run.cancelled = true;
+  setState('stopping');
+
+  const stage = run.stage, secs = elapsed();
+
+  // 1. Client side, instantly: name the run, then drop the connection.
+  logLine('POST /chat/runs/' + run.runId + '/cancel  → 202', 'hot');
+  logLine('AbortController.abort()  — fetch torn down', 'hot');
+  setProc('sse','signalled','aborting','the reader went away');
+  setProc('token','signalled','SET','every checkpoint now raises');
+
+  // 2. Queued readers cost nothing: they never start.
+  const queued = run.shards.filter(s => s.state === 'queued');
+  queued.forEach(s => { s.state = 'dropped'; s.chip.className = 'chip dropped'; });
+  const running = run.shards.filter(s => s.state === 'running');
+  if (run.shards.length){
+    logLine(`pool.shutdown(cancel_futures=True) — ${queued.length} shards dropped unstarted`, 'cold');
+    setProc('pool','signalled','draining',`${running.length} unwinding · ${queued.length} dropped`);
+  }
+
+  // 3. Running readers finish the call already in flight, then raise at the
+  //    next checkpoint. That is the whole cost of a stop.
+  running.forEach((s, k) => later(() => {
+    s.state = 'aborted'; s.chip.className = 'chip aborted'; bumpWaste();
+    if (k === running.length - 1) logLine(`${running.length} in-flight calls unwound — Cancelled raised`, 'cold');
+  }, 250 + k * 90));
+
+  later(() => {
+    setProc('thread','stopped','unwound','Cancelled propagated out');
+    setProc('pool','stopped','joined','0 running · 0 queued');
+    setProc('sse','stopped','closed','event: cancelled, then close');
+    setProc('db','stopped','skipped','a stopped turn is not persisted');
+    logLine('→ event: cancelled  {"stage":"' + stage + '","elapsed_ms":' + Math.round(secs*1000) + '}', 'hot');
+    logLine('record_exchange skipped — nothing half-finished enters history', 'cold');
+    showStopped(stage, secs);
+  }, 1100);
+}
+
+function showStopped(stage, secs){
+  const done = run.done, total = run.shards.length, traces = run.traces.slice(-40);
+  const question = run.question;
+  clearInterval(run.clock); clearTimers();
+  run.node.remove();
+
+  const card = document.createElement('div');
+  card.className = 'stopped fade';
+  const progress = total
+    ? `${STAGE_LABELS[stage]} · <span class="mono">${done} of ${total}</span> pages read · <span class="mono">${secs.toFixed(1)}s</span>`
+    : `${STAGE_LABELS[stage]} · <span class="mono">${secs.toFixed(1)}s</span>`;
+  card.innerHTML = `
+    <div class="stopped-top">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>
+      Stopped
+    </div>
+    <div class="stopped-meta">${progress}</div>
+    <div class="stopped-note">Nothing was verified, so nothing is shown.</div>
+    <div class="stopped-actions">
+      <button class="pill" id="show-trail">View what it did</button>
+      <button class="pill" id="again">Ask again</button>
+    </div>
+    <div class="trail hidden" id="kept-trail" style="margin-top:12px;border-top:1px solid hsl(var(--line));max-height:none"></div>`;
+  thread.appendChild(card);
+  card.scrollIntoView({behavior:'smooth', block:'end'});
+
+  card.querySelector('#show-trail').addEventListener('click', (e) => {
+    const t = card.querySelector('#kept-trail');
+    const open = !t.classList.toggle('hidden');
+    e.target.textContent = open ? 'Hide what it did' : 'View what it did';
+    if (open && !t.childElementCount){
+      // Sixty seconds of reading is not thrown away just because it was stopped.
+      t.innerHTML = traces.map(line => {
+        const [who, ...rest] = line.split(' · ');
+        return `<div class="trace"><span class="who">${who || '—'}</span><span class="what">${rest.join(' · ')}</span></div>`;
+      }).join('') || '<div class="trace"><span class="who">—</span><span class="what">stopped before anything ran</span></div>';
+    }
+  });
+  card.querySelector('#again').addEventListener('click', () => {
+    input.value = question; input.focus(); grow(); refreshAction();
+  });
+
+  run = null;
+  setState('idle');
+}
+
+/* ------------------------------------------------------------------ *
+ * The one slot: Send / Stop / Stopping
+ * ------------------------------------------------------------------ */
+function setState(state){
+  action.dataset.state = state;
+  if (state === 'idle'){
+    action.innerHTML = ARROW;
+    action.setAttribute('aria-label','Send question');
+    action.title = 'Send';
+    el('hint').innerHTML = '<span>Answers are checked against the filing before they appear.</span>';
+    refreshAction();
+  } else if (state === 'running'){
+    action.disabled = false;
+    action.innerHTML = SQUARE;
+    action.setAttribute('aria-label','Stop this answer');
+    action.title = 'Stop (Esc)';
+    el('hint').innerHTML = '<span>Working. Press</span><kbd>Esc</kbd><span>or the square to stop — every reader stops too.</span>';
+  } else {
+    action.disabled = true;
+    action.innerHTML = '<span class="spin"></span><span>Stopping…</span>';
+    action.setAttribute('aria-label','Stopping');
+    el('hint').innerHTML = '<span>Unwinding the calls already in flight.</span>';
+  }
+}
+
+// The textarea is never disabled during a run: a disabled field steals focus,
+// and Esc would land nowhere.
+function refreshAction(){
+  if (action.dataset.state !== 'idle') return;
+  action.disabled = input.value.trim().length < 3;
+}
+function grow(){
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+}
+
+input.addEventListener('input', () => { grow(); refreshAction(); });
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); submit(); }
+  if (e.key === 'Escape' && run) { e.preventDefault(); stop(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && run) stop(); });
+
+form.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+action.addEventListener('click', (e) => {
+  if (action.dataset.state === 'running'){ e.preventDefault(); stop(); }
+});
+function submit(){
+  if (run) return;                      // Enter during a run is not a second question
+  const q = input.value.trim();
+  if (q.length < 3) return;
+  input.value = ''; grow();
+  ask(q);
+}
+suggestions.addEventListener('click', (e) => {
+  const b = e.target.closest('.suggestion'); if (!b || run) return;
+  ask(b.textContent.trim());
+});
+
+setState('idle');
+input.focus();
+</script>
+</body>
+</html>

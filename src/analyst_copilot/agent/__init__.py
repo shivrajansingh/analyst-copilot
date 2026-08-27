@@ -5,6 +5,7 @@ that can prove itself, and never serves a figure the document does not support.
 See `pipeline.py` for the tier boundaries and why they sit where they do.
 """
 
+from analyst_copilot.agent.cancellation import NEVER, CancelToken, Cancelled
 from analyst_copilot.agent.conversation import ConversationResponder
 from analyst_copilot.agent.corpus import DocumentCorpus, PageMeta, PageRef, Shard
 from analyst_copilot.agent.decompose import QuestionDecomposer
@@ -39,6 +40,8 @@ __all__ = [
     "AnswerMode",
     "AnswerPart",
     "AnswerValidator",
+    "CancelToken",
+    "Cancelled",
     "Citation",
     "ConversationResponder",
     "DeepSearchOrchestrator",
@@ -48,6 +51,7 @@ __all__ = [
     "Finding",
     "Intent",
     "IntentRouter",
+    "NEVER",
     "PageMeta",
     "PageRef",
     "QuestionDecomposer",
