@@ -35,7 +35,7 @@ Four things were wrong, and each one is an enhancement below:
 | 4 | [Partial findings](#4-partial-findings) | Answers spanning two statements | [16 §Partial findings](16-agent-harness.md#partial-findings-when-no-single-reader-can-answer) |
 | 5 | [Intent routing](#5-intent-routing) | "Hi" searching a 10-K | [16 §Tier 0](16-agent-harness.md#tier-0--routing) |
 | 6 | [Question decomposition](#6-question-decomposition) | Compound questions diluting retrieval | [16 §Tier 1](16-agent-harness.md#tier-1--decomposition) |
-| 7 | [Streaming progress](#7-streaming-progress) | A minute of silence reading as a hang | [11 §Streaming](11-api.md#ask-a-question-streaming-progress) |
+| 7 | [Streaming progress and the activity feed](#7-streaming-progress-and-the-activity-feed) | A minute of silence reading as a hang | [11 §trace events](11-api.md#trace-events) |
 | 8 | [Evidence surfaces](#8-evidence-surfaces) | A computed figure with nothing to check | — |
 | 9 | [Accent themes](#9-accent-themes) | A palette that read as decorative | [18](18-design-system.md) |
 
@@ -114,11 +114,28 @@ answered and **cited separately**. Composition is done in code, not by a model: 
 model asked to merge four answers rewrites their figures, and a figure that
 changes after verification is unverified again.
 
-### 7. Streaming progress
+### 7. Streaming progress and the activity feed
 
-`POST /chat/stream` emits `stage` events then exactly one `answer` event. What
-streams is **progress, not tokens** — verification runs after the model replies,
-so streaming an answer would put an unproven figure on screen.
+`POST /chat/stream` emits `stage` milestones, `trace` steps underneath them, then
+exactly one `answer` event. Two event types because the volumes differ by two
+orders of magnitude — a handful of milestones against several hundred steps.
+
+A `trace` is one of three real things: `thought` (text the model wrote of its own
+accord before a tool call), `tool` (the name, nothing else), `agent` (one agent's
+lifecycle — `running` → `found` / `partial` / `empty` / `failed`). The UI shows
+these in two panels, **collapsed by default**, so the default view stays calm and
+the detail is one click away.
+
+What streams is **progress, not tokens**. Verification runs after the model
+replies, so forwarding model tokens would put an unproven figure on screen. The
+answer text does animate in, but that is a **reveal of already-verified text**,
+not a live stream: instant under `prefers-reduced-motion`, instant for an answer
+already revealed once, and never replayed for history.
+
+Tool arguments and results never leave the process — a tool result is document
+text the verifier has not seen. Traces are also never persisted: they are
+progress, not evidence, so a reloaded thread shows the answer and its citations,
+which are the parts that have to survive.
 
 ### 8. Evidence surfaces
 

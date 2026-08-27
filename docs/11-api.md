@@ -151,9 +151,50 @@ data: {"doc_name":"3M_2022_10K","found":true,"mode":"deep", ...}
 
 | Event | Payload | Notes |
 |---|---|---|
-| `stage` | `{stage, detail, done?, total?, part?, part_total?}` | Zero or more, in order. `done`/`total` are set only while readers are fanning out. |
+| `stage` | `{stage, detail, done?, total?, part?, part_total?}` | Milestones. A handful per answer. `done`/`total` only while readers are fanning out. |
+| `trace` | `{kind, agent?, text?, tool?, status?}` | The activity underneath. **Several hundred per answer.** |
 | `answer` | The full `ChatResponse` | Exactly one, and always last |
 | `error` | `{code, message}` | Instead of `answer`. The HTTP status is still `200` — the stream had already begun. |
+
+### `trace` events
+
+Two event types rather than one because the volumes differ by two orders of
+magnitude: a client that wants a progress bar should be able to read `stage` and
+ignore this entirely.
+
+| `kind` | Carries | Meaning |
+|---|---|---|
+| `thought` | `agent`, `text` | Text the model wrote of its own accord before calling a tool |
+| `tool` | `agent`, `tool` | A tool call, **by name only** |
+| `agent` | `agent`, `status` | One agent's lifecycle: `running` → `found` / `partial` / `empty` / `failed` |
+
+```text
+event: trace
+data: {"kind":"agent","agent":"reader 7","status":"running"}
+
+event: trace
+data: {"kind":"thought","agent":"reader 7","text":"Page 60 has a cash flow line for PP&E purchases; reading it for the column headers."}
+
+event: trace
+data: {"kind":"tool","agent":"reader 7","tool":"read_page"}
+
+event: trace
+data: {"kind":"agent","agent":"reader 7","status":"found"}
+```
+
+`agent` is `reader N`, `synthesis` or `checker`. Thought text is truncated to 240
+characters before it leaves the process — this is a progress feed, not a
+transcript.
+
+**Tool arguments and tool results are never sent.** They are large, they are the
+least interesting part to watch, and a tool result is document text the verifier
+has not seen: putting it on the wire would leak exactly the unverified figures
+the API withholds everywhere else. There is a test asserting a `trace` payload
+carries no other keys.
+
+Everything on this channel is real. A quiet run looks quiet — nothing is
+synthesised to fill a gap, because a progress feed that invents activity is worse
+than one that admits there is none.
 
 **Progress is streamed; the answer is not.** Verification runs after the model
 replies, so streaming tokens would put an unproven figure on screen. The answer
