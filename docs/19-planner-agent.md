@@ -182,6 +182,153 @@ Everything below the planner is the pipeline that exists now.
 
 ---
 
+## 3a. How it decides — and what a wrong decision costs
+
+The worry is the right one: this is a single point of failure in front of
+everything. The answer is not "the planner will be accurate". It is that **no
+planner decision is allowed to be terminal.**
+
+### The failure matrix
+
+Wrong decisions are not equal. Some are self-correcting and some destroy the
+answer:
+
+| Planner says | Actually | Cost | Recoverable? |
+|---|---|---|---|
+| `document` | smalltalk | A few seconds, and "not found in this filing" to "hi" | ✅ self-corrects — it abstains |
+| `document` | `corpus_meta` | Wasted search, honest abstention | ✅ self-corrects |
+| `smalltalk` / `capability` | a real question | **Answered from nothing** | ❌ **terminal today** |
+| `corpus_meta` | a real question | **Answered from the manifest, confidently** | ❌ **terminal today** |
+| scoped to FY2019 | answer is in FY2018 | Answer unreachable | ❌ unless the search widens |
+| scoped to FY2019 | FY2019 *has* a similar figure | **Wrong period, every digit traces** | ❌ **the dangerous one** |
+
+Note the shape: **misrouting *into* the document path is harmless — it abstains.
+Misrouting *out of* it is fatal.** That is why the current router prompt says to
+resolve doubt toward the document, and the planner inherits that bias.
+
+### Every branch gets a fallback
+
+The three ❌ rows above are only terminal because nothing catches them today.
+They do not have to be:
+
+```mermaid
+flowchart LR
+    P{planner} -->|smalltalk / capability| C[conversational reply]
+    C -->|"reply would need<br/>the document"| S
+    P -->|corpus_meta| M[answer from manifest]
+    M -->|"not answerable<br/>from metadata"| S
+    P -->|document, scoped| S[search]
+    S -->|"scoped search<br/>found nothing"| W[widen to all documents]
+    W -->|still nothing| A([abstain])
+    S --> A
+```
+
+Three cheap guards, one per branch:
+
+1. **Conversational escape.** The responder is already forbidden from stating a
+   figure from a filing. Give it one more option: *"this needs the document"* —
+   and that answer re-enters the pipeline as a document question. A misrouted
+   greeting costs one wasted short call.
+2. **Metadata escape.** `corpus_meta` answers come from computed facts, not from
+   a model counting. If the question asks something the manifest does not contain,
+   there is nothing to answer *with*, and it falls through to search.
+3. **Widen on empty.** Already in the proposal, and mandatory.
+
+With those, a wrong planner decision costs **latency, not an answer**. That is
+the whole argument for letting a model make this decision at all.
+
+### What the last row needs, and does not have
+
+The `wrong period, every digit traces` row is not fixed by any fallback, because
+the search *succeeds* — it just succeeds on the wrong document. The verifier
+cannot see it: every figure is genuinely on the cited page.
+
+The only guard is the checker's period rule, and that is a prompt. This failure
+already exists — one of the three current −1s is a quick ratio read from the
+March balance sheet when the question asked about Q2 — and **narrowing to the
+wrong document makes it more likely, not less.**
+
+This is the strongest argument for shipping classification before scoping, and
+for scoping conservatively when it does ship. It is also the reason D2 matters.
+
+### What it decides *from*
+
+| Signal | Available today | Notes |
+|---|---|---|
+| The question text | ✅ | |
+| Recent turns | ✅ | See §3b — already plumbed |
+| Document names | ✅ | User-controlled, so a hint not a fact |
+| Company / fiscal year / period covered | ❌ | This is what document cards are for (§4a) |
+| Page counts, formats | ✅ | On the manifest already |
+
+The categories are structurally different, which is what makes this tractable:
+`corpus_meta` asks about the *collection* ("how many", "which years", "what
+files"), `document` asks about a *fact inside* one, `smalltalk` has no subject at
+all. That is a distinction a model handles well and a word list handles badly —
+which is the argument of §1c.
+
+The planner should also be required to state its reasoning and a confidence, and
+**low confidence must mean "do not narrow"** rather than "guess".
+
+---
+
+## 3b. Conversation history — what exists today
+
+Checked, because the planner would depend on it.
+
+**It is fully plumbed.** `POST /chat` and `/chat/stream` load the thread's
+messages from Postgres and pass them down:
+
+```text
+_history()  →  reads conversation.messages for this user's thread
+format_history(turns, limit=6, max_chars=400)
+    ↓
+Analyst: What was 3M FY2018 capex?
+Assistant: $1,577 million (3M_2018_10K, page 60).
+Analyst: and the year before?
+```
+
+| Stage | Sees history |
+|---|---|
+| Router | ✅ |
+| Decomposer | ✅ |
+| Conversational responder | ✅ |
+| Readers (as `context`) | ✅ |
+| Synthesis (as `context`) | ✅ |
+| **Checker** | ❌ |
+
+Trimmed hard on purpose — six turns, 400 characters each — because a full
+transcript invites a model to answer from a previous turn's figures instead of
+from the document, which is how a citation ends up attached to a number it never
+proved.
+
+### The gap this check found
+
+**The checker never sees history, and it is asked to judge questions that need
+it.** For a follow-up like *"and the year before?"*, the checker receives that
+literal string plus a proposed answer about FY2017, and is asked whether the
+answer is *responsive*. It cannot possibly tell.
+
+Two ways to fix it, and they are not equivalent:
+
+- **Thread context into the checker too.** A seventh place that has to be kept in
+  step, and it reintroduces the bias the trimming exists to prevent — a checker
+  that has read the previous answer is more likely to bless a consistent wrong one.
+- **Have the planner resolve the question once.** Rewrite *"and the year
+  before?"* into *"What was 3M's capital expenditure in FY2017?"* at the top of
+  the pipeline, and every stage below receives a self-contained question. The
+  checker needs no history because the question no longer depends on any.
+
+The second is better, and it is a further argument for the planner: **question
+resolution belongs with the component that already has to read the question and
+the history to classify it.** It also fixes decomposition, which today only
+rewrites when it splits — a single follow-up passes through unresolved.
+
+I would add `resolved_question` to the planner's output and treat the original
+message as display-only.
+
+---
+
 ## 4. The pieces
 
 ### 4a. Document cards — the planner's input
@@ -226,6 +373,7 @@ page can confirm it.
 |---|---|---|
 | `kind` | `smalltalk` \| `capability` \| `corpus_meta` \| `document` | Which path runs at all |
 | `documents` | subset of the filing set | What tier 1 and tier 3 may look at |
+| `resolved_question` | a self-contained rewrite | "and the year before?" becomes answerable on its own — see §3b |
 | `confidence` | low \| high | Low confidence ⇒ do not narrow at all |
 | `deep_path` | worth it \| not | Whether an abstention should escalate |
 
@@ -359,9 +507,11 @@ The order I would propose:
 
 1. Build a multi-document filing set — nothing below can be measured without one
 2. Document cards at index time — useful on their own, and the planner's input
-3. The planner, replacing the router: classify into four kinds, delete the 125
-   hardcoded tokens. **This alone closes 1b and 1c**, and carries no
+3. The planner, replacing the router: classify into four kinds, resolve the
+   question into a self-contained form, delete the 125 hardcoded tokens.
+   **This alone closes 1b, 1c and the checker's missing context**, and carries no
    document-scoping risk because it does not scope yet.
+   Ship the two escape hatches with it (§3a) so no classification is terminal.
 4. Measure: rubric unchanged, and what a greeting now costs
 5. `corpus_meta` answered from the manifest
 6. Document scoping for tier 3, behind a setting, with mandatory widen
