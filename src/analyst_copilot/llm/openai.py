@@ -8,6 +8,7 @@ from openai import OpenAI
 
 from analyst_copilot.config.settings import get_settings
 from analyst_copilot.llm.base import ChatClient, ChatTurn, ToolCall
+from analyst_copilot import usage as metering
 
 
 class OpenAICompatibleChatClient(ChatClient):
@@ -52,6 +53,7 @@ class OpenAICompatibleChatClient(ChatClient):
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        self._meter(response, messages, None)
         content = response.choices[0].message.content
         if content:
             return content
@@ -93,6 +95,7 @@ class OpenAICompatibleChatClient(ChatClient):
                 request["tool_choice"] = tool_choice
 
         response = self._client.chat.completions.create(**request)
+        self._meter(response, messages, tools)
         choice = response.choices[0]
         message = choice.message
 
@@ -126,3 +129,62 @@ class OpenAICompatibleChatClient(ChatClient):
             finish_reason=choice.finish_reason or "",
             message=assistant,
         )
+
+    # ----------------------------------------------------------------- #
+    # metering
+    # ----------------------------------------------------------------- #
+    def _meter(
+        self,
+        response: Any,
+        messages: List[dict],
+        tools: Optional[List[Dict[str, Any]]],
+    ) -> None:
+        """
+        Charge this call to whatever run and stage the caller is inside.
+
+        The provider's own numbers are preferred and an estimate is the
+        fallback, because a gateway is free to omit `usage` and several do.
+        What is never done is passing an estimate off as a measurement -- the
+        `estimated` flag travels with the figure all the way to the screen.
+
+        Wrapped whole: a malformed `usage` payload is a reporting problem, and a
+        reporting problem must not lose an answer that has already been paid for.
+        """
+        try:
+            reported = getattr(response, "usage", None)
+            input_tokens = int(getattr(reported, "prompt_tokens", 0) or 0)
+            output_tokens = int(getattr(reported, "completion_tokens", 0) or 0)
+
+            if input_tokens or output_tokens:
+                details = getattr(reported, "prompt_tokens_details", None)
+                cached = int(getattr(details, "cached_tokens", 0) or 0)
+                metering.record(
+                    metering.Usage(
+                        model=self._model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cached_input_tokens=cached,
+                    )
+                )
+                return
+
+            # Nothing reported. Count what we sent and what came back.
+            text = ""
+            for choice in getattr(response, "choices", None) or []:
+                message = getattr(choice, "message", None)
+                text += getattr(message, "content", None) or ""
+                for call in getattr(message, "tool_calls", None) or []:
+                    function = getattr(call, "function", None)
+                    text += getattr(function, "arguments", None) or ""
+            metering.record(
+                metering.Usage(
+                    model=self._model,
+                    input_tokens=(
+                        metering.count_messages(messages) + metering.count_tools(tools)
+                    ),
+                    output_tokens=metering.count_text(text),
+                    estimated=True,
+                )
+            )
+        except Exception:  # noqa: BLE001 - metering is never load-bearing
+            pass

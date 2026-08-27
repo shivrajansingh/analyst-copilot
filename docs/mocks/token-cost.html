@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en" class="dark" data-accent="slate">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Token usage &amp; cost — interactive mock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ===========================================================================
+   Tokens lifted verbatim from ui/src/styles/globals.css. Nothing below this
+   block invents a colour: if the product retunes a token, this mock retunes
+   with it, and a mock that advertises a colour the app no longer uses is how a
+   design system quietly stops being one.
+   =========================================================================== */
+:root{
+  --canvas:220 30% 98%; --surface:0 0% 100%; --surface-raised:0 0% 100%; --surface-sunken:220 24% 96%;
+  --line:220 16% 90%; --line-strong:220 14% 82%;
+  --ink:222 30% 12%; --ink-muted:222 12% 40%; --ink-subtle:222 10% 55%;
+  --accent:215 28% 40%; --accent-soft:215 32% 94%; --accent-ink:0 0% 100%;
+  --verified:158 68% 32%; --verified-soft:158 60% 95%;
+  --declined:32 85% 40%; --declined-soft:38 92% 95%;
+  --failed:350 72% 45%; --failed-soft:350 88% 96%;
+  --building:205 88% 42%; --building-soft:205 92% 95%;
+  --shadow:222 40% 20%;
+}
+.dark{
+  --canvas:222 30% 7%; --surface:222 26% 10%; --surface-raised:222 24% 13%; --surface-sunken:222 30% 6%;
+  --line:222 18% 20%; --line-strong:222 16% 30%;
+  --ink:220 24% 96%; --ink-muted:220 12% 68%; --ink-subtle:220 10% 52%;
+  --accent:213 32% 72%; --accent-soft:215 25% 22%; --accent-ink:220 35% 12%;
+  --verified:158 64% 52%; --verified-soft:158 50% 14%;
+  --declined:38 92% 62%; --declined-soft:36 60% 14%;
+  --failed:350 84% 66%; --failed-soft:350 50% 16%;
+  --building:205 92% 62%; --building-soft:205 60% 14%;
+  --shadow:222 60% 2%;
+}
+[data-accent='navy']{--accent:218 82% 42%;--accent-soft:214 95% 95%;--accent-ink:0 0% 100%;--building:192 88% 38%;--building-soft:192 85% 94%}
+.dark[data-accent='navy']{--accent:211 92% 66%;--accent-soft:214 60% 20%;--accent-ink:222 45% 9%;--building:190 85% 58%;--building-soft:190 55% 14%}
+[data-accent='teal']{--accent:187 78% 32%;--accent-soft:185 72% 94%;--accent-ink:0 0% 100%;--building:224 80% 52%;--building-soft:224 90% 95%}
+.dark[data-accent='teal']{--accent:184 72% 55%;--accent-soft:186 55% 15%;--accent-ink:196 65% 8%;--building:222 90% 68%;--building-soft:222 55% 16%}
+[data-accent='slate']{--accent:215 28% 40%;--accent-soft:215 32% 94%;--accent-ink:0 0% 100%}
+.dark[data-accent='slate']{--accent:213 32% 72%;--accent-soft:215 25% 22%;--accent-ink:220 35% 12%}
+[data-accent='graphite']{--accent:222 24% 18%;--accent-soft:220 16% 93%;--accent-ink:0 0% 100%}
+.dark[data-accent='graphite']{--accent:220 18% 88%;--accent-soft:220 14% 20%;--accent-ink:222 30% 10%}
+[data-accent='indigo']{--accent:243 75% 58%;--accent-soft:243 90% 96%;--accent-ink:0 0% 100%}
+.dark[data-accent='indigo']{--accent:243 84% 70%;--accent-soft:243 60% 18%;--accent-ink:222 40% 10%}
+
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:14px;
+  background:hsl(var(--canvas));color:hsl(var(--ink));
+  -webkit-font-smoothing:antialiased;font-feature-settings:'cv02','cv03','cv04','cv11';
+  min-height:100vh;display:flex;flex-direction:column;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace}
+/* Every icon is sized by class, never left to fill its box. Sizes mirror the
+   Tailwind classes the real components use: h-3 w-3 = 12px, h-3.5 w-3.5 = 14px. */
+svg{flex:none;display:block}
+.ic{width:14px;height:14px}
+.pill .ic{width:12px;height:12px}
+.agentbar .ic,.agentbar .chev{width:14px;height:14px;color:hsl(var(--ink-subtle))}
+.tabular{font-variant-numeric:tabular-nums}
+:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--canvas)),0 0 0 4px hsl(var(--accent))}
+
+/* text-2xs, verbatim from tailwind.config.ts */
+.t2xs{font-size:.6875rem;line-height:1rem;letter-spacing:.02em}
+.tracking-wider{letter-spacing:.05em}
+
+/* ---------- mock chrome (NOT part of the product) ---------- */
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:10px 18px;border-bottom:1px dashed hsl(var(--line-strong));
+  background:hsl(var(--surface-sunken));font-size:11.5px;color:hsl(var(--ink-muted));
+  position:sticky;top:0;z-index:20;
+}
+.chrome b{color:hsl(var(--ink));font-weight:600;letter-spacing:.02em}
+.chrome .spacer{flex:1}
+.chrome label{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:hsl(var(--ink-subtle))}
+.seg{display:flex;border:1px solid hsl(var(--line));border-radius:8px;overflow:hidden;background:hsl(var(--surface))}
+.seg button{padding:4px 9px;font-size:11.5px;color:hsl(var(--ink-muted));white-space:nowrap}
+.seg button+button{border-left:1px solid hsl(var(--line))}
+.seg button[aria-pressed="true"]{background:hsl(var(--accent));color:hsl(var(--accent-ink))}
+.sw{display:flex;gap:6px}
+.sw button{width:20px;height:20px;border-radius:999px;border:1px solid hsl(var(--line-strong));background:hsl(var(--accent))}
+.sw button[aria-pressed="true"]{box-shadow:0 0 0 2px hsl(var(--canvas)),0 0 0 3.5px hsl(var(--accent))}
+
+/* ---------- transcript ---------- */
+.scroll{flex:1;overflow-y:auto;padding:32px 20px 96px}
+.thread{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+
+.bubble{align-self:flex-end;max-width:78%;border-radius:12px;padding:10px 14px;
+  background:hsl(var(--accent));color:hsl(var(--accent-ink));font-size:14px;line-height:1.5}
+
+/* ---------- AnswerCard — mirrors ui/src/components/chat/AnswerCard.tsx ---------- */
+.card{position:relative;overflow:hidden;border-radius:.75rem;border:1px solid hsl(var(--line));
+  background:hsl(var(--surface));
+  box-shadow:0 1px 2px hsl(var(--shadow)/.06),0 8px 24px -12px hsl(var(--shadow)/.18);
+  animation:fade-up 220ms cubic-bezier(.22,1,.36,1) both}
+@keyframes fade-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.45}}
+.rule{position:absolute;inset-block:0;left:0;width:3px;background:hsl(var(--verified))}
+.card.is-stopped .rule{background:hsl(var(--line-strong))}
+.card.is-chat .rule{background:hsl(var(--accent))}
+
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-bottom:1px solid hsl(var(--line)/.7);padding:8px 12px 8px 20px}
+.eyebrow{font-weight:600;text-transform:uppercase;color:hsl(var(--ink-muted))}
+.head-right{display:flex;align-items:center;gap:8px}
+.pill{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;border-radius:999px;
+  background:hsl(var(--surface-sunken));padding:2px 8px;font-weight:500;
+  text-transform:uppercase;letter-spacing:.02em;color:hsl(var(--ink-muted))}
+.verified{display:inline-flex;align-items:center;gap:6px;font-weight:500;
+  text-transform:uppercase;letter-spacing:.02em;color:hsl(var(--verified))}
+.card-body{padding:16px 16px 16px 20px}
+.answer{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  font-size:15px;line-height:1.625;color:hsl(var(--ink));white-space:pre-wrap}
+
+.chips{margin-top:16px;display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid hsl(var(--line));
+  border-radius:999px;background:hsl(var(--surface-sunken));padding:3px 10px;
+  font-size:.6875rem;line-height:1rem;color:hsl(var(--ink-muted))}
+.chip .pg{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;color:hsl(var(--ink))}
+
+/* the existing agent summary, drawn so placement can be judged truthfully */
+.agents{margin-top:16px;border-top:1px solid hsl(var(--line)/.7);padding-top:12px}
+.agentbar{display:flex;align-items:center;gap:8px;border:1px solid hsl(var(--line));
+  border-radius:8px;background:hsl(var(--surface-sunken)/.6);padding:8px 12px;color:hsl(var(--ink-subtle))}
+.dot{width:6px;height:6px;border-radius:999px;flex:none}
+
+/* =========================================================================
+   THE PROPOSED SURFACE — usage strip
+   ========================================================================= */
+.usage{margin-top:16px;border-top:1px solid hsl(var(--line)/.7);padding-top:12px}
+.card-body > .agents + .usage{margin-top:12px}
+
+.usage-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  height:20px;color:hsl(var(--ink-subtle));border-radius:4px}
+.usage-row:hover .u-cost{color:hsl(var(--accent))}
+.usage-row .chev{flex:none;width:14px;height:14px;color:hsl(var(--ink-subtle));
+  transition:transform 160ms cubic-bezier(.22,1,.36,1)}
+.usage[data-open="true"] .chev{transform:rotate(90deg);color:hsl(var(--accent))}
+.usage-row .coins{flex:none;width:14px;height:14px;color:hsl(var(--ink-subtle))}
+.u-tokens{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:.6875rem;line-height:1rem;letter-spacing:.02em;color:hsl(var(--ink-muted))}
+.u-sep{color:hsl(var(--ink-subtle));font-size:.6875rem}
+.u-cost{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:.6875rem;line-height:1rem;letter-spacing:.02em;font-weight:500;color:hsl(var(--ink));
+  transition:color 120ms}
+.u-note{font-size:.6875rem;line-height:1rem;letter-spacing:.02em;color:hsl(var(--ink-subtle))}
+.u-spacer{flex:1}
+.u-model{font-family:"JetBrains Mono",monospace;font-size:.6875rem;letter-spacing:.02em;
+  color:hsl(var(--ink-subtle));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+
+/* estimated marker — deliberately NOT amber. `declined` means the system
+   declined; an estimate is not a decline. */
+.est{display:inline-flex;align-items:center;gap:3px;cursor:help;
+  border-bottom:1px dashed hsl(var(--ink-subtle)/.6)}
+
+/* disclosure */
+.u-panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows 200ms cubic-bezier(.22,1,.36,1)}
+.usage[data-open="true"] .u-panel{grid-template-rows:1fr}
+.u-panel > div{overflow:hidden}
+.u-table{margin-top:10px;border-top:1px solid hsl(var(--line));padding-top:6px}
+.u-hd,.u-tr{display:grid;grid-template-columns:1fr 34px 58px 52px 74px;align-items:center;
+  column-gap:10px;height:24px;font-size:.6875rem;letter-spacing:.02em}
+.u-hd{height:20px;color:hsl(var(--ink-subtle));text-transform:uppercase;font-size:.625rem;letter-spacing:.06em}
+/* Share-of-cost bar. Painted as the row's own background rather than a
+   pseudo-element: ::before inside a grid container becomes a grid item and
+   lands in column one. */
+.u-tr{color:hsl(var(--ink-muted));border-radius:3px;
+  background-image:linear-gradient(to right,
+    hsl(var(--accent)/.10) 0 calc(var(--share) * 100%), transparent 0);
+  background-repeat:no-repeat}
+.u-stage{display:flex;align-items:baseline;gap:8px;min-width:0}
+.u-stage b{font-weight:400;flex:none}
+.u-stage i{font-style:normal;font-family:"JetBrains Mono",monospace;color:hsl(var(--ink-subtle)/.8);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.u-num{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;text-align:right;color:hsl(var(--ink-subtle))}
+.u-tr .u-money{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;
+  text-align:right;color:hsl(var(--ink))}
+.u-total{display:grid;grid-template-columns:1fr 34px 58px 52px 74px;align-items:center;column-gap:10px;
+  height:26px;margin-top:6px;border-top:1px solid hsl(var(--line)/.7);padding-top:6px;
+  font-size:.6875rem;letter-spacing:.02em;color:hsl(var(--ink))}
+.u-total .lbl{font-weight:600}
+.u-foot{margin-top:8px;font-size:.6875rem;line-height:1.45;letter-spacing:.02em;color:hsl(var(--ink-subtle))}
+.u-foot code{font-family:"JetBrains Mono",monospace}
+
+/* ---------- spec overlay ---------- */
+body[data-spec="on"] .usage{outline:1px dashed hsl(var(--accent)/.55);outline-offset:2px}
+body[data-spec="on"] .usage-row{outline:1px dashed hsl(var(--failed)/.45)}
+body[data-spec="on"] .u-tr{outline:1px dashed hsl(var(--building)/.35)}
+.spec-note{display:none}
+body[data-spec="on"] .spec-note{display:block;margin-top:6px;font-size:10.5px;line-height:1.5;
+  color:hsl(var(--ink-subtle));font-family:"JetBrains Mono",monospace}
+
+.legend{max-width:720px;margin:28px auto 0;border:1px solid hsl(var(--line));border-radius:12px;
+  background:hsl(var(--surface));padding:16px 18px;font-size:12px;line-height:1.6;color:hsl(var(--ink-muted))}
+.legend h2{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:hsl(var(--ink-muted));
+  font-weight:600;margin-bottom:8px}
+.legend b{color:hsl(var(--ink));font-weight:600}
+.legend ul{margin:6px 0 0 16px}
+.legend li{margin-bottom:4px}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body data-spec="off">
+
+<div class="chrome">
+  <b>Token usage &amp; cost</b>
+  <span>docs/mocks/token-cost.html</span>
+  <span class="spacer"></span>
+
+  <label>Scenario</label>
+  <div class="seg" id="scenarios"></div>
+
+  <label>Accent</label>
+  <div class="sw" id="accents"></div>
+
+  <div class="seg">
+    <button id="theme" aria-pressed="true">Dark</button>
+    <button id="spec" aria-pressed="false">Spec</button>
+  </div>
+</div>
+
+<div class="scroll">
+  <div class="thread" id="thread"></div>
+  <div class="legend">
+    <h2>What this mock is asserting</h2>
+    <ul>
+      <li><b>Cost belongs to the answer, not beside it.</b> The strip is a footer on <code>AnswerCard</code>, below the citations and below the agent trail — the last thing read, because it is the least important thing on the card and the card must not start with a price.</li>
+      <li><b>No state colour.</b> Nothing here is <b>verified</b>, <b>declined</b>, <b>failed</b> or <b>building</b>. Those four mean the system proved / declined / errored / is indexing, and a cost is none of them. Only <code>ink</code>, <code>ink-muted</code>, <code>ink-subtle</code> and <code>accent</code> appear.</li>
+      <li><b>An estimate never looks like a measurement.</b> When the provider omits <code>usage</code> the figure carries a <code>~</code> and a dotted underline, and the footnote says so in words.</li>
+      <li><b>No price is better than a wrong price.</b> An unpriced model shows tokens and says <i>no price configured</i>. It never guesses a rate.</li>
+      <li><b>Headline 4dp, rows 6dp.</b> The headline is read at a glance; the rows are compared against each other, where <code>$0.0001</code> would collapse four distinct stages into one number. Tabular numerals keep the decimal points aligned.</li>
+      <li><b>Every row names the model that ran it.</b> A run uses two — a chat model and an embedding model at a hundredth of the price — and a table of costs that does not say which is which cannot be checked against a provider's bill.</li>
+      <li><b>The header names the model that spent the most</b>, not the first one used. The query embedding runs before any chat call, so "first" is reliably the cheapest thing in the run — naming it hides the model doing 99.99% of the spending. Attribution is read off the stage, not inferred.</li>
+      <li><b>A cost below a micro-dollar is <code>&lt;$0.000001</code>, never <code>$0.000000</code>.</b> Money is carried as integer micro-dollars, so the query embedding arrives as an exact zero — and a row of zeros reads as "free" rather than "too small to write down".</li>
+      <li><b>The row background is the share of cost.</b> A deep run is ~71% reader fan-out, and that should be visible without a chart or a second colour.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   Data. Real shapes, arithmetic done in integer micro-dollars exactly as the
+   backend would — a float total accumulated over 31 readers drifts at the 4th
+   decimal, which is where these numbers live.
+   ========================================================================= */
+const RATE = { in: 0.22, out: 0.66 };          // USD per 1M tokens, off-peak, from config
+const MODEL = 'deepseek-v4-flash';
+
+const micro = (i, o) => Math.round(i * RATE.in + o * RATE.out); // µ$ , tokens×($/Mtok) = µ$
+const S = (stage, calls, i, o) => ({ stage, calls, in: i, out: o, micro: micro(i, o), model: MODEL });
+
+const DEEP = [
+  S('Understood the question',       1,   412,   18),
+  S('Split into 2 parts',            1,   690,   96),
+  S('Read 5 retrieved pages',        1,  6240,  214),
+  S('Checked the answer',            1,  1830,  142),
+  S('Read all 118 pages · 31 agents',31, 38104, 2210),
+  S('Composed the answer',           1,  4908,  186),
+  S('Verified against the page',     1,  2110,   88),
+];
+const FAST = [
+  S('Understood the question',       1,   412,   18),
+  S('Read 5 retrieved pages',        1,  6240,  214),
+  S('Checked the answer',            1,  1830,  142),
+  S('Verified against the page',     1,  2110,   88),
+];
+const STOPPED = [
+  S('Understood the question',       1,   412,   18),
+  S('Read 5 retrieved pages',        1,  6240,  214),
+  S('Checked the answer',            1,  1830,  142),
+  S('Read 118 pages · 12 of 31 done',12, 14760,  842),
+];
+const CHAT = [ S('Answered directly', 1, 286, 44) ];
+
+// $0.01 per million tokens: 24 tokens is a fraction of a micro-dollar, which is
+// why the row exists to show "<$0.000001" rather than a zero.
+const EMBED = { model: 'qwen/qwen3-embedding-8b', tokens: 24, micro: 0 };  // $0.00000024
+
+const SCENARIOS = {
+  deep: {
+    label: 'Deep run', stages: DEEP, priced: true, estimated: false, embed: EMBED,
+    kind: 'answer', mode: 'deep',
+    answer: 'Total net sales for 3M in fiscal 2022 were $34,229 million, down 3.2% from\n$35,355 million in 2021.',
+    chips: [['3M_2022_10K.htm','p.31'],['3M_2022_10K.htm','p.58']],
+    agents: '31 agents · 3 found evidence · 27 nothing there · 1 failed',
+    question: 'What were 3M’s total net sales in FY2022, and how did they change?',
+  },
+  fast: {
+    label: 'Fast run', stages: FAST, priced: true, estimated: false, embed: EMBED,
+    kind: 'answer', mode: 'fast',
+    answer: 'Research and development expense was $1,862 million in fiscal 2022.',
+    chips: [['3M_2022_10K.htm','p.44']],
+    agents: null,
+    question: 'What was 3M’s R&D expense in FY2022?',
+  },
+  unpriced: {
+    label: 'No price set', stages: FAST, priced: false, estimated: false, embed: EMBED,
+    kind: 'answer', mode: 'fast',
+    answer: 'Research and development expense was $1,862 million in fiscal 2022.',
+    chips: [['3M_2022_10K.htm','p.44']],
+    agents: null,
+    question: 'What was 3M’s R&D expense in FY2022?',
+  },
+  estimated: {
+    label: 'Estimated', stages: FAST, priced: true, estimated: true, embed: EMBED,
+    kind: 'answer', mode: 'fast',
+    answer: 'Research and development expense was $1,862 million in fiscal 2022.',
+    chips: [['3M_2022_10K.htm','p.44']],
+    agents: null,
+    question: 'What was 3M’s R&D expense in FY2022?',
+  },
+  stopped: {
+    label: 'Stopped run', stages: STOPPED, priced: true, estimated: false, embed: EMBED,
+    kind: 'stopped', mode: 'deep',
+    agents: '12 agents · 12 nothing there',
+    question: 'Summarise every risk factor 3M disclosed in 2022.',
+  },
+  chat: {
+    label: 'Smalltalk', stages: CHAT, priced: true, estimated: false, embed: null,
+    kind: 'chat', mode: 'conversational',
+    answer: 'Hello. I can answer questions about the filings you’ve added — ask me\nabout a figure and I’ll cite the page it came from.',
+    chips: [], agents: null,
+    question: 'hi',
+  },
+};
+
+/* ---------- formatting ---------- */
+const n = (v) => v.toLocaleString('en-US');
+// A cost that rounds to nothing is written as "<$0.000001", never "$0.000000":
+// the query embedding really does cost a fraction of a micro-dollar, and a row
+// of zeros reads as "free" rather than "too small to write down".
+const money = (m, dp) => {
+  const value = m / 1e6;
+  const floor = Number('1e-' + dp);
+  return value > 0 && value < floor ? '<$' + floor.toFixed(dp) : '$' + value.toFixed(dp);
+};
+const dollars4 = (m) => money(m, 4);
+const dollars6 = (m) => money(m, 6);
+
+/* ---------- icons (lucide) ---------- */
+const svg = (paths, cls) =>
+  `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const ICON = {
+  coins: svg('<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>','coins'),
+  chevron: svg('<path d="m9 18 6-6-6-6"/>','chev'),
+  shield: svg('<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>','ic'),
+  layers: svg('<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m6.08 9.5-3.5 1.6a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/>','ic'),
+  users: svg('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>','ic'),
+  square: svg('<rect x="6" y="6" width="12" height="12" rx="1.5"/>','ic'),
+};
+
+/* ---------- the usage strip ---------- */
+function usageStrip(s, open) {
+  const chatIn  = s.stages.reduce((a, r) => a + r.in, 0);
+  const chatOut = s.stages.reduce((a, r) => a + r.out, 0);
+  const chatMicro = s.stages.reduce((a, r) => a + r.micro, 0);
+  const calls = s.stages.reduce((a, r) => a + r.calls, 0) + (s.embed ? 1 : 0);
+  const totalTokens = chatIn + chatOut + (s.embed ? s.embed.tokens : 0);
+  const totalMicro = chatMicro + (s.embed && s.embed.micro ? s.embed.micro : 0);
+  const peak = Math.max(...s.stages.map((r) => r.micro));
+
+  const tilde = s.estimated ? '~' : '';
+  const tokensEl = s.estimated
+    ? `<span class="u-tokens est" title="The provider did not report usage for one or more calls, so these tokens were counted locally. The figure is close, not exact.">${tilde}${n(totalTokens)} tokens</span>`
+    : `<span class="u-tokens">${n(totalTokens)} tokens</span>`;
+
+  const money = s.priced
+    ? `<span class="u-cost">${tilde}${dollars4(totalMicro)}</span>`
+    : `<span class="u-note">no price configured</span>`;
+
+  const rows = s.stages.map((r) => `
+      <div class="u-tr" style="--share:${(r.micro / peak).toFixed(3)}">
+        <span class="u-stage"><b>${r.stage}</b><i>${r.model}</i></span>
+        <span class="u-num">${r.calls}</span>
+        <span class="u-num">${n(r.in)}</span>
+        <span class="u-num">${n(r.out)}</span>
+        <span class="u-money">${s.priced ? dollars6(r.micro) : '—'}</span>
+      </div>`).join('');
+
+  const embedRow = s.embed ? `
+      <div class="u-tr" style="--share:0">
+        <span class="u-stage"><b>Embedded the query</b><i>${s.embed.model}</i></span>
+        <span class="u-num">1</span>
+        <span class="u-num">${n(s.embed.tokens)}</span>
+        <span class="u-num">—</span>
+        <span class="u-money">${
+          s.embed.micro === null ? '—' : s.embed.micro === 0 ? '&lt;$0.000001' : dollars6(s.embed.micro)
+        }</span>
+      </div>` : '';
+
+  const foot = [
+    s.priced
+      ? `Priced at <code>$${RATE.in.toFixed(2)}</code> / <code>$${RATE.out.toFixed(2)}</code> per million input / output tokens, from <code>CHAT_PRICE_INPUT</code> and <code>CHAT_PRICE_OUTPUT</code>.`
+      : `No rate is configured for <code>${MODEL}</code>, so no cost is shown. Set <code>CHAT_PRICE_INPUT</code> and <code>CHAT_PRICE_OUTPUT</code> to price it.`,
+    s.estimated
+      ? `The provider did not return <code>usage</code>, so these tokens were counted locally with the model’s tokenizer. Treat them as close, not exact.`
+      : '',
+    s.embed && s.embed.micro === null
+      ? `The embedding model <code>${s.embed.model}</code> has no configured rate; its tokens are counted but not priced.`
+      : '',
+  ].filter(Boolean).join(' ');
+
+  return `
+  <div class="usage" data-open="${open}">
+    <button class="usage-row" aria-expanded="${open}" onclick="toggle(this)">
+      ${ICON.chevron}
+      ${ICON.coins}
+      ${tokensEl}
+      <span class="u-sep">·</span>
+      ${money}
+      <span class="u-spacer"></span>
+      <span class="u-model">${calls} calls · ${MODEL}${s.embed ? ' +1' : ''}</span>
+    </button>
+    <div class="u-panel"><div>
+      <div class="u-table">
+        <div class="u-hd">
+          <span>Stage · model</span><span class="u-num">×</span><span class="u-num">In</span>
+          <span class="u-num">Out</span><span class="u-num">Cost</span>
+        </div>
+        ${rows}${embedRow}
+        <div class="u-total">
+          <span class="lbl">Total</span>
+          <span class="u-num mono tabular">${calls}</span>
+          <span class="u-num mono tabular">${n(chatIn)}</span>
+          <span class="u-num mono tabular">${n(chatOut)}</span>
+          <span class="u-money mono tabular" style="color:hsl(var(--ink));font-weight:600">
+            ${s.priced ? dollars6(totalMicro) : '—'}</span>
+        </div>
+        <p class="u-foot">${foot}</p>
+      </div>
+    </div></div>
+    <p class="spec-note">
+      strip: mt-16 · border-t line/70 · pt-12 &nbsp;|&nbsp; row: h-20 gap-8 · icons 14×14<br>
+      text: 11px/16px ls .02em &nbsp;|&nbsp; table row h-24 · cols 1fr 34 58 52 74 · gap-10<br>
+      colours used: ink, ink-muted, ink-subtle, accent/.10 — no state colour
+    </p>
+  </div>`;
+}
+
+/* ---------- the card ---------- */
+function card(s, open) {
+  if (s.kind === 'stopped') {
+    return `
+    <article class="card is-stopped">
+      <span class="rule"></span>
+      <div class="card-head">
+        <span class="eyebrow t2xs tracking-wider">Stopped</span>
+        <span class="head-right">
+          <span class="pill t2xs">${ICON.square} stopped at 24.8s</span>
+        </span>
+      </div>
+      <div class="card-body">
+        <p class="t2xs" style="color:hsl(var(--ink-muted));line-height:1.6">
+          You stopped this answer while 12 of 31 agents had finished reading.
+          Nothing was proved, so nothing is shown — and this turn was not saved
+          to the thread.
+        </p>
+        ${s.agents ? agentBar(s.agents) : ''}
+        ${usageStrip(s, open)}
+      </div>
+    </article>`;
+  }
+
+  const isChat = s.kind === 'chat';
+  return `
+  <article class="card ${isChat ? 'is-chat' : ''}">
+    <span class="rule"></span>
+    <div class="card-head">
+      <span class="eyebrow t2xs tracking-wider">${isChat ? 'Reply' : 'Answer'}</span>
+      <span class="head-right">
+        ${s.mode === 'deep' ? `<span class="pill t2xs">${ICON.layers} full read</span>` : ''}
+        ${isChat
+          ? `<span class="t2xs" style="color:hsl(var(--ink-subtle));text-transform:uppercase;letter-spacing:.02em">nothing to cite</span>`
+          : `<span class="verified t2xs">${ICON.shield} verified</span>`}
+      </span>
+    </div>
+    <div class="card-body">
+      <p class="answer">${s.answer}</p>
+      ${s.chips.length ? `<div class="chips">${s.chips.map(
+        ([d, p]) => `<span class="chip">${d} <span class="pg">${p}</span></span>`).join('')}</div>` : ''}
+      ${s.agents ? agentBar(s.agents) : ''}
+      ${usageStrip(s, open)}
+    </div>
+  </article>`;
+}
+
+function agentBar(text) {
+  return `<div class="agents"><div class="agentbar t2xs">
+    ${ICON.chevron}${ICON.users}<span>${text}</span></div></div>`;
+}
+
+/* ---------- wiring ---------- */
+let current = 'deep';
+let open = false;
+
+function render() {
+  const s = SCENARIOS[current];
+  document.getElementById('thread').innerHTML =
+    `<div class="bubble">${s.question}</div>` + card(s, open);
+}
+/* Toggled in place rather than re-rendered, so the disclosure actually
+   animates — a re-render would paint the panel already open. */
+function toggle(btn) {
+  open = !open;
+  const strip = btn.closest('.usage');
+  strip.dataset.open = String(open);
+  btn.setAttribute('aria-expanded', String(open));
+}
+document.getElementById('scenarios').innerHTML = Object.entries(SCENARIOS)
+  .map(([k, v]) => `<button data-k="${k}" aria-pressed="${k === current}">${v.label}</button>`).join('');
+document.getElementById('scenarios').onclick = (e) => {
+  const k = e.target.dataset.k; if (!k) return;
+  current = k;
+  [...e.currentTarget.children].forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === k));
+  render();
+};
+
+const ACCENTS = ['slate', 'navy', 'teal', 'graphite', 'indigo'];
+document.getElementById('accents').innerHTML = ACCENTS
+  .map((a) => `<button data-a="${a}" data-accent="${a}" title="${a}" aria-pressed="${a === 'slate'}"></button>`).join('');
+document.getElementById('accents').onclick = (e) => {
+  const a = e.target.dataset.a; if (!a) return;
+  document.documentElement.setAttribute('data-accent', a);
+  [...e.currentTarget.children].forEach((b) => b.setAttribute('aria-pressed', b.dataset.a === a));
+};
+
+document.getElementById('theme').onclick = (e) => {
+  const dark = document.documentElement.classList.toggle('dark');
+  e.target.textContent = dark ? 'Dark' : 'Light';
+  e.target.setAttribute('aria-pressed', String(dark));
+};
+document.getElementById('spec').onclick = (e) => {
+  const on = document.body.dataset.spec === 'off';
+  document.body.dataset.spec = on ? 'on' : 'off';
+  e.target.setAttribute('aria-pressed', String(on));
+};
+
+render();
+</script>
+</body>
+</html>

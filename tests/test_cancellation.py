@@ -21,6 +21,7 @@ import uvicorn
 from analyst_copilot.agent.cancellation import NEVER, CancelToken, Cancelled
 from analyst_copilot.agent.corpus import DocumentCorpus
 from analyst_copilot.agent.models import Stage, StageEvent
+from analyst_copilot import usage
 from analyst_copilot.agent.orchestrator import DeepSearchOrchestrator
 from analyst_copilot.agent.runtime import AgentRuntime
 from analyst_copilot.agent.tools import (
@@ -217,10 +218,20 @@ class BlockingAgent:
         scope_ready=None,
         on_trace=None,
         cancel: Optional[CancelToken] = None,
+        meter=None,
     ):
         if on_stage is not None:
             on_stage(
                 StageEvent(Stage.DEEP_SEARCH, "reading every page", done=12, total=31)
+            )
+        if meter is not None:
+            # Tokens genuinely spent before the stop. A run that is stopped has
+            # still been paid for, and the point of reporting it is that the
+            # analyst can see what stopping saved.
+            meter.record(
+                usage.Usage(model="stub-model", input_tokens=14760, output_tokens=842),
+                "deep_search",
+                "Read 118 pages · 12 of 31 done",
             )
         self.started.set()
         # A deadline, so a test that fails to stop it fails loudly rather than
@@ -378,6 +389,36 @@ def test_cancelling_ends_the_stream_with_cancelled_and_no_answer(stopping):
     assert (stopped["done"], stopped["total"]) == (12, 31)
     assert stopped["elapsed_ms"] >= 0
     assert "answer" not in stopped
+
+
+def test_a_stopped_run_still_reports_what_it_spent(stopping):
+    """
+    The one number a stop does carry, and the exception that proves the rule.
+
+    A partial answer is withheld because it was never verified. Tokens are not
+    an answer: they were genuinely spent whatever the run proved, and reporting
+    them is the difference between an analyst who knows what stopping saved and
+    one who is guessing.
+    """
+    with _ask(stopping) as response:
+        events = _sse(response)
+        _, run = next(events)
+        assert stopping.agent.started.wait(2), "the run never started"
+        stopping.post(f"{API}/chat/runs/{run['run_id']}/cancel")
+        seen = [(name, payload) for name, payload in events]
+
+    stopped = seen[-1][1]
+    spend = stopped["usage"]
+    assert spend["input_tokens"] == 14_760
+    assert spend["output_tokens"] == 842
+    assert spend["total_tokens"] == 15_602
+    assert spend["calls"] == 1
+    assert [entry["stage"] for entry in spend["stages"]] == ["deep_search"]
+    assert spend["stages"][0]["label"] == "Read 118 pages · 12 of 31 done"
+    # No rate is configured for the stub model, so there is no dollar figure --
+    # and deliberately not a zero, which would read as "this was free".
+    assert spend["priced"] is False
+    assert spend["cost_usd"] is None
 
 
 def test_the_work_itself_stops_not_just_the_reporting(stopping):

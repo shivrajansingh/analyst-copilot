@@ -22,4 +22,5 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Multi-agent retrieval](12-multi-agent-retrieval.md) | The assessment that led to the harness |
 | [Docker](15-docker.md) | **Running the stack**: api + ui containers, compose, nginx |
 | [Stopping a run](19-stopping-a-run.md) | **The stop button**: what it takes to stop work in a worker thread |
+| [What an answer cost](20-token-cost.md) | **Token usage and price** per answer, and the two things it refuses to guess |
 | [Design system](18-design-system.md) | Colour tokens, accent themes, why colour means something |

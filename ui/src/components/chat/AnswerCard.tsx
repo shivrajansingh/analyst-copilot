@@ -3,6 +3,7 @@ import type { ChatResponse, TraceEvent } from '@/api/types'
 import { useRevealedText } from '@/hooks/useRevealedText'
 import { SubagentSummary } from './SubagentSummary'
 import { ThinkingTrail } from './ThinkingTrail'
+import { UsageStrip } from './UsageStrip'
 import { CitationChip } from '@/components/evidence/CitationChip'
 import { Tooltip } from '@/components/ui/Tooltip'
 
@@ -100,6 +101,11 @@ export function AnswerCard({
             <ThinkingTrail traces={traces} />
           </div>
         )}
+
+        {/* Last on the card, deliberately. What the answer cost is a property
+            of the answer, not a headline — and a card that opened with a price
+            would put the cheapest thing on it first. */}
+        {result.usage && <UsageStrip usage={result.usage} className="mt-4" />}
 
         {/* A part that could not be proved is stated as such rather than
             quietly dropped: a half-answered question the reader thinks was

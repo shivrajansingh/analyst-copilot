@@ -105,6 +105,57 @@ export interface AnswerPart {
 }
 
 /**
+ * What one stage of the pipeline spent.
+ *
+ * `label` is prose written by the backend where the counts are known —
+ * "Read all 118 pages · 31 agents" can only be composed by the code that knows
+ * both numbers.
+ */
+export interface StageUsage {
+  stage: string
+  label: string
+  calls: number
+  input_tokens: number
+  output_tokens: number
+  cached_input_tokens: number
+  /** Null when a model in this stage has no configured price. */
+  cost_usd: number | null
+  /** Which models spent under this stage. Almost always one. */
+  models: string[]
+  estimated: boolean
+}
+
+/**
+ * What an answer cost.
+ *
+ * Two flags decide how this renders, and both are refusals to overstate:
+ *
+ * `priced` is false when no rate is configured for the model, and then
+ * `cost_usd` is null. The UI shows tokens and says so — it must never fall back
+ * to a guessed rate, because this service talks to a gateway that can put any
+ * model behind any name at any margin, and an analyst acts on a number.
+ *
+ * `estimated` is true when the provider omitted `usage` and the tokens were
+ * counted locally. Render it: an estimate shown identically to a measurement is
+ * the same class of dishonesty as an unverified figure.
+ */
+export interface Usage {
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cached_input_tokens: number
+  /** Model calls made, including the query embedding. */
+  calls: number
+  cost_usd: number | null
+  priced: boolean
+  estimated: boolean
+  /** Every model this answer used, in first-use order. */
+  models: string[]
+  /** The breakdown, in the order the run happened. */
+  stages: StageUsage[]
+}
+
+/**
  * One thing the harness did, from POST /chat/stream.
  *
  * Finer-grained than a stage: which agent is running, what it said it was about
@@ -154,6 +205,14 @@ export interface CancelledEvent {
   /** Readers finished and readers in total, when the deep path was running. */
   done?: number
   total?: number
+  /**
+   * What the run spent before it was stopped.
+   *
+   * The one number a stop does carry. A partial answer is withheld because it
+   * was never verified; tokens are not an answer, and they were genuinely spent
+   * whatever the run proved.
+   */
+  usage?: Usage
 }
 
 /** A progress milestone from POST /chat/stream. */
@@ -270,6 +329,13 @@ export interface ChatResponse {
   user_message_id: string | null
   message_id: string | null
   latency_ms: number | null
+  /**
+   * Tokens spent on this answer and what they cost.
+   *
+   * Null on an answer served before this existed, which is why every stored
+   * response passes through `normalizeChatResponse`.
+   */
+  usage: Usage | null
 
   /** Which tier answered. Check this before `found`. */
   mode: AnswerMode

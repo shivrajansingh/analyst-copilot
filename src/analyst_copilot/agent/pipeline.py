@@ -42,6 +42,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
 
+from analyst_copilot import usage as metering
 from analyst_copilot.agent.cancellation import CancelToken, Cancelled, token_or_never
 from analyst_copilot.agent.conversation import ConversationResponder
 from analyst_copilot.agent.corpus import DocumentCorpus, DocumentUnavailable
@@ -194,6 +195,7 @@ class AnalystAgent:
         scope_ready: Optional[bool] = None,
         on_trace: Optional[tracing.TraceCallback] = None,
         cancel: Optional[CancelToken] = None,
+        meter: Optional[metering.UsageMeter] = None,
     ) -> AgentAnswer:
         """
         Answer one message.
@@ -207,22 +209,47 @@ class AnalystAgent:
         `cancel` stops the run. It raises `Cancelled` out of this method rather
         than returning an abstention, because "stopped" and "the filing does not
         say" are different facts and only one of them is about the document.
+
+        `meter` counts what the answer costs. It is bound to the context here
+        rather than threaded through the twenty calls below, and the binding
+        happens *inside* this method on purpose: the pipeline runs in a worker
+        thread, and a context set by the caller is not reliably the context this
+        body runs in.
         """
+        with metering.metering(meter):
+            return self._answer(
+                message, collection, doc_name, history, on_stage, scope_ready,
+                on_trace, cancel,
+            )
+
+    def _answer(
+        self,
+        message: str,
+        collection: Optional[str],
+        doc_name: Optional[str],
+        history: Optional[Sequence[dict]],
+        on_stage: Optional[StageCallback],
+        scope_ready: Optional[bool],
+        on_trace: Optional[tracing.TraceCallback],
+        cancel: Optional[CancelToken],
+    ) -> AgentAnswer:
         stop = token_or_never(cancel)
         context = format_history(history or [], limit=self._settings.agent_history_turns)
         scope = self._resolve_scope(collection, doc_name)
 
         stop.raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.ROUTING, "reading the message"))
-        routing = self._intents().route(message, context)
+        with metering.stage(Stage.ROUTING.value, "Understood the question"):
+            routing = self._intents().route(message, context)
 
         if routing.intent in (Intent.SMALLTALK, Intent.CAPABILITY):
-            reply = self._conversation().reply(
-                message,
-                collection=scope.collection,
-                documents=scope.documents,
-                history=context,
-            )
+            with metering.stage("conversational", "Answered directly"):
+                reply = self._conversation().reply(
+                    message,
+                    collection=scope.collection,
+                    documents=scope.documents,
+                    history=context,
+                )
             _emit(on_stage, StageEvent(Stage.DONE, "replied"))
             return AgentAnswer(
                 question=message,
@@ -286,7 +313,8 @@ class AnalystAgent:
             return [message]
         token_or_never(cancel).raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.DECOMPOSING, "checking for multiple questions"))
-        decomposition = self._splitter().split(message, context)
+        with metering.stage(Stage.DECOMPOSING.value, "Checked for several questions"):
+            decomposition = self._splitter().split(message, context)
         if decomposition.split:
             _emit(
                 on_stage,
@@ -362,10 +390,11 @@ class AnalystAgent:
         one in-flight call a checkpoint inside it could save.
         """
         try:
-            if scope.collection:
-                return self._qa.answer_collection(question, scope.collection)
-            if scope.doc_name:
-                return self._qa.answer(question, scope.doc_name)
+            with metering.stage(Stage.RETRIEVING.value, "Read the retrieved pages"):
+                if scope.collection:
+                    return self._qa.answer_collection(question, scope.collection)
+                if scope.doc_name:
+                    return self._qa.answer(question, scope.doc_name)
         except Exception as exc:  # noqa: BLE001 - tier 1 failing is a reason to escalate
             logger.warning("fast path failed for %r: %s", question[:60], exc)
             return None
@@ -393,17 +422,18 @@ class AnalystAgent:
         tracing.emit(
             on_trace, tracing.agent_status("checker", tracing.AgentStatus.RUNNING)
         )
-        validation = self._checker().check(
-            question=question,
-            answer=fast.answer,
-            doc_name=fast.doc_name,
-            page=fast.page,
-            corpus=scope.corpus,
-            page_label=fast.location_label or "",
-            evidence_snippet=fast.evidence_snippet,
-            on_trace=on_trace,
-            cancel=stop,
-        )
+        with metering.stage(Stage.VALIDATING.value, "Checked the answer"):
+            validation = self._checker().check(
+                question=question,
+                answer=fast.answer,
+                doc_name=fast.doc_name,
+                page=fast.page,
+                corpus=scope.corpus,
+                page_label=fast.location_label or "",
+                evidence_snippet=fast.evidence_snippet,
+                on_trace=on_trace,
+                cancel=stop,
+            )
         _report_verdict(on_trace, validation)
         return validation
 
