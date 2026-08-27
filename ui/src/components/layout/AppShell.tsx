@@ -1,15 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Menu, Moon, Sun, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { Sidebar } from './Sidebar'
-import { applyTheme, useUiStore } from '@/stores/ui.store'
+import { useUiStore } from '@/stores/ui.store'
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const theme = useUiStore((state) => state.theme)
   const toggleTheme = useUiStore((state) => state.toggleTheme)
 
-  useEffect(() => applyTheme(theme), [theme])
+  // No effect syncing the document here: the store applies theme and accent
+  // itself on every change, at boot and on rehydration. Two mechanisms writing
+  // the same attribute is how one of them silently stops mattering.
 
   return (
     <div className="flex h-dvh overflow-hidden bg-canvas">

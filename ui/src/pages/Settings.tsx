@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { useHealth } from '@/hooks/useHealth'
 import { useCollections } from '@/hooks/useCollections'
+import { AppearanceCard } from '@/components/settings/AppearanceCard'
 
 /**
  * Provider settings.
@@ -27,11 +28,13 @@ export function SettingsPage() {
         <header className="mb-6">
           <h1 className="text-lg font-semibold tracking-tight text-ink">Settings</h1>
           <p className="mt-1 text-sm text-ink-muted">
-            The model endpoints this service answers with.
+            How the app looks, and the model endpoints this service answers with.
           </p>
         </header>
 
         <div className="space-y-4">
+          <AppearanceCard />
+
           <Card>
             <CardHeader
               title={

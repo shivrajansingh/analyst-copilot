@@ -17,8 +17,9 @@
     --ink: 222 30% 12%;
     --ink-muted: 222 12% 40%;
     --ink-subtle: 222 10% 55%;
-    --accent: 243 75% 58%;
-    --accent-soft: 243 90% 96%;
+    /* Overridden per accent theme below; navy is the default. */
+    --accent: 218 82% 42%;
+    --accent-soft: 214 95% 95%;
     --accent-ink: 0 0% 100%;
     --verified: 158 68% 32%;
     --verified-soft: 158 60% 95%;
@@ -41,9 +42,9 @@
     --ink: 220 24% 96%;
     --ink-muted: 220 12% 68%;
     --ink-subtle: 220 10% 52%;
-    --accent: 243 84% 70%;
-    --accent-soft: 243 60% 18%;
-    --accent-ink: 222 40% 10%;
+    --accent: 211 92% 66%;
+    --accent-soft: 214 60% 20%;
+    --accent-ink: 222 45% 9%;
     --verified: 158 64% 52%;
     --verified-soft: 158 50% 14%;
     --declined: 38 92% 62%;
@@ -53,6 +54,88 @@
     --building: 205 92% 62%;
     --building-soft: 205 60% 14%;
     --shadow: 222 60% 2%;
+  }
+
+  /*
+   * Accent themes.
+   *
+   * Selected in Settings and written to `data-accent` on <html>. Matched by
+   * attribute rather than on `:root`, so the same rules also apply to a swatch
+   * in the picker: the swatch is *inside* an element carrying `data-accent`, so
+   * it inherits the real token and cannot drift from the theme it previews.
+   *
+   * Only the accent moves. `verified`, `declined` and `failed` are reserved for
+   * state and never change, which is why no accent here sits near green, amber
+   * or red -- an accent that reads as a status would undo the one rule the
+   * colour system has. Two themes also move `building`, because the "indexing"
+   * badge is blue and would otherwise be mistaken for the accent.
+   */
+  [data-accent='navy'] {
+    --accent: 218 82% 42%;
+    --accent-soft: 214 95% 95%;
+    --accent-ink: 0 0% 100%;
+    --building: 192 88% 38%;
+    --building-soft: 192 85% 94%;
+  }
+  .dark[data-accent='navy'],
+  .dark [data-accent='navy'] {
+    --accent: 211 92% 66%;
+    --accent-soft: 214 60% 20%;
+    --accent-ink: 222 45% 9%;
+    --building: 190 85% 58%;
+    --building-soft: 190 55% 14%;
+  }
+
+  [data-accent='teal'] {
+    --accent: 187 78% 32%;
+    --accent-soft: 185 72% 94%;
+    --accent-ink: 0 0% 100%;
+    --building: 224 80% 52%;
+    --building-soft: 224 90% 95%;
+  }
+  .dark[data-accent='teal'],
+  .dark [data-accent='teal'] {
+    --accent: 184 72% 55%;
+    --accent-soft: 186 55% 15%;
+    --accent-ink: 196 65% 8%;
+    --building: 222 90% 68%;
+    --building-soft: 222 55% 16%;
+  }
+
+  [data-accent='slate'] {
+    --accent: 215 28% 40%;
+    --accent-soft: 215 32% 94%;
+    --accent-ink: 0 0% 100%;
+  }
+  .dark[data-accent='slate'],
+  .dark [data-accent='slate'] {
+    --accent: 213 32% 72%;
+    --accent-soft: 215 25% 22%;
+    --accent-ink: 220 35% 12%;
+  }
+
+  [data-accent='graphite'] {
+    --accent: 222 24% 18%;
+    --accent-soft: 220 16% 93%;
+    --accent-ink: 0 0% 100%;
+  }
+  .dark[data-accent='graphite'],
+  .dark [data-accent='graphite'] {
+    --accent: 220 18% 88%;
+    --accent-soft: 220 14% 20%;
+    --accent-ink: 222 30% 10%;
+  }
+
+  [data-accent='indigo'] {
+    --accent: 243 75% 58%;
+    --accent-soft: 243 90% 96%;
+    --accent-ink: 0 0% 100%;
+  }
+  .dark[data-accent='indigo'],
+  .dark [data-accent='indigo'] {
+    --accent: 243 84% 70%;
+    --accent-soft: 243 60% 18%;
+    --accent-ink: 222 40% 10%;
   }
 
   * {
