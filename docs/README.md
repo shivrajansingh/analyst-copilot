@@ -17,6 +17,8 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [Question answering](09-qa-pipeline.md) | LLM extract + verify + abstain |
 | [Evaluation](10-evaluation.md) | Answer runners + rubric scorer (+1 / 0 / −1) |
 | [HTTP API](11-api.md) | FastAPI service: add filing, status, chat |
+| [What changed in this round](17-enhancements.md) | **Start here**: the enhancements, what each fixed, what it measured |
 | [Agent harness](16-agent-harness.md) | **Routing, validation and whole-document deep search** |
 | [Multi-agent retrieval](12-multi-agent-retrieval.md) | The assessment that led to the harness |
 | [Docker](15-docker.md) | **Running the stack**: api + ui containers, compose, nginx |
+| [Design system](18-design-system.md) | Colour tokens, accent themes, why colour means something |
