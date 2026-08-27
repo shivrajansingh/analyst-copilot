@@ -67,22 +67,47 @@ today** to take a 25-second model call off the critical path:
   digit. Both are document-question signals.
 - `how many pages does this filing have` — `filing` is in the finance-term list.
 
-That optimisation was worth making and it was too blunt. A message can carry
-every signal of a document question and still be a question *about* the corpus
-rather than *from* it. The heuristic has no way to tell, and neither does the
-prompt-based classifier reliably — it gets these right today and it is one
-sampling away from not.
+That optimisation was worth making and it was the wrong shape. A message can
+carry every signal of a document question and still be a question *about* the
+corpus rather than *from* it, and no word list can tell the difference.
 
-**These are the same gap.** Both are the system failing to decide what kind of
-work a question needs before doing the work.
+### 1c. The routing decision is 125 hardcoded tokens
+
+The real problem is not the two misroutes. It is what produces them:
+
+| In `agent/router.py` | Count |
+|---|---:|
+| `_EXACT_SMALLTALK` phrases | 49 |
+| `_EXACT_CAPABILITY` phrases | 15 |
+| `_FINANCE_TERMS` | 61 |
+| `_LONG_MESSAGE_WORDS` | a magic `8` |
+| **Total hardcoded classification tokens** | **125** |
+
+Every one of those is a guess about how an analyst will phrase something, and
+each is a place the router can be wrong in a way nobody notices until a user
+types the sentence that falls between two lists. `filing` being a finance term is
+correct nine times in ten and wrong for *"how many pages does this filing have"*.
+Adding `how many pages` to a counter-list fixes that sentence and not the next
+one.
+
+A word list cannot classify intent. It can only approximate it, and the
+approximation is now provably leaking.
+
+**All three of these are the same gap.** The system does not decide what kind of
+work a question needs; it pattern-matches its way to a strategy and executes it.
 
 ---
 
 ## 2. What a planner is, and is not
 
-**Is:** one cheap step that looks at the question and the filing set and decides
-*what to run* — answer from metadata, search one document, search all of them,
-skip the deep path entirely.
+**Is:** one step that looks at the question and the filing set and decides *what
+to run* — reply conversationally, answer from metadata, search one document,
+search all of them, skip the deep path entirely.
+
+**It replaces the router.** Not "and also does routing" — replaces it. The 125
+hardcoded tokens go, and one model call makes the decision that four word lists
+and a magic number currently approximate. That is the point of the exercise as
+much as the token saving is.
 
 **Is not:** a re-ranker, a retriever, or anything that touches evidence. It never
 sees page text and never proposes an answer. It narrows the search space; the
@@ -117,43 +142,43 @@ That turns a wrong scope into *lost time* instead of *a lost answer*.
 
 ```mermaid
 flowchart TD
-    MSG([user message]) --> ROUTE{intent}
+    MSG([user message]) --> PLAN
 
-    ROUTE -->|smalltalk| CONV[conversational reply]
-    ROUTE -->|capability| CONV
-    ROUTE -->|document question| PLAN
+    PLAN[["PLANNER — replaces the router<br/>sees: the question, the document cards,<br/>recent turns. Never page text, never evidence."]]
 
-    PLAN[["PLANNER — new<br/>reads the question + document cards<br/>no page text, no evidence"]]
+    PLAN --> KIND{what work does<br/>this need?}
 
-    PLAN --> KIND{what kind of work?}
+    KIND -->|not about a document| CONV["conversational reply<br/>greeting, or what the assistant is"]
+    KIND -->|about the corpus itself| META["answer from the manifest<br/>doc count, names, years, page counts<br/><b>no retrieval, no readers</b>"]
+    KIND -->|from the documents| SCOPE["choose documents<br/>+ is the deep path worth it?"]
 
-    KIND -->|about the corpus itself| META["answer from the manifest<br/>doc count, names, years, page counts<br/><b>no retrieval</b>"]
-    KIND -->|needs the documents| SCOPE["choose documents<br/>+ whether the deep path is worth it"]
-
-    SCOPE --> T1[TIER 1 · hybrid retrieval<br/>scoped to chosen documents]
+    SCOPE --> T1[TIER 1 · hybrid retrieval]
     T1 --> T2[TIER 2 · checker<br/>whole cited page]
     T2 -->|correct| DONE([answer + citation])
     T2 -->|doubted| GATE
-
     T1 -->|abstained| GATE
+
     GATE{deep path<br/>worth running?}
     GATE -->|no| ABSTAIN([not found in this filing])
     GATE -->|yes| T3[TIER 3 · readers over<br/>the chosen documents only]
 
     T3 --> FOUND{anything found?}
-    FOUND -->|yes| VERIFY[verify → checker]
-    VERIFY --> DONE
-    FOUND -->|no, and scope was narrowed| WIDEN["WIDEN<br/>re-run over the documents<br/>the planner excluded"]
+    FOUND -->|yes| VERIFY[verify → checker] --> DONE
+    FOUND -->|no, scope was narrowed| WIDEN["WIDEN<br/>re-run over the documents<br/>the planner excluded"]
     WIDEN --> FOUND2{anything found?}
     FOUND2 -->|yes| VERIFY
     FOUND2 -->|no| ABSTAIN
-    FOUND -->|no, scope was already everything| ABSTAIN
+    FOUND -->|no, scope was everything| ABSTAIN
 
-    META --> DONE2([answer, nothing cited])
+    CONV --> DONE2([reply, nothing cited])
+    META --> DONE2
 ```
 
-The two new decisions are `what kind of work?` and `choose documents`. Everything
-below them is the pipeline that exists today.
+```
+
+The planner sits where the router sits today, and answers a wider question. The
+four intent classes replace three; `documents` and `deep_path` are new.
+Everything below the planner is the pipeline that exists now.
 
 ---
 
@@ -199,23 +224,40 @@ page can confirm it.
 
 | Decision | Values | Consequence |
 |---|---|---|
-| `kind` | `corpus_meta` \| `document` | Skip retrieval entirely, or proceed |
+| `kind` | `smalltalk` \| `capability` \| `corpus_meta` \| `document` | Which path runs at all |
 | `documents` | subset of the filing set | What tier 1 and tier 3 may look at |
 | `confidence` | low \| high | Low confidence ⇒ do not narrow at all |
 | `deep_path` | worth it \| not | Whether an abstention should escalate |
 
 ### 4c. Where it runs
 
-**After the router, before tier 1.** One call, on the critical path, so it has to
-be cheap — the document cards are small and the question is short, so it is a
-few hundred tokens either way.
+**First. In place of the router.** One call on the critical path, and it must be
+cheap: the document cards are small and the question is short, so it is a few
+hundred tokens either way.
 
-It should be skippable by heuristic exactly as routing now is:
+What it costs, honestly:
 
-- one document in the filing set ⇒ **nothing to plan**, skip the call entirely
-- the question names a year that exactly one card covers ⇒ scope without a call
+| | Today | With the planner |
+|---|---|---|
+| Greeting | 0 calls (literal match) | **1 call** |
+| Obvious document question | 0 calls (heuristic) | **1 call** |
+| Ambiguous message | 1 call (router) | 1 call |
+| Document question needing scoping | 1 call (router) + no scoping | 1 call |
 
-That keeps the common cases free.
+So it is *cheaper* than router-plus-planner would be, and **more expensive than
+today for the two cases the heuristics currently catch for free**. That is the
+price of the 125 tokens going away, and it is a real price: the measurement that
+motivated the heuristics was a 25-second routing call against a slow provider.
+
+The one skip I would still argue for is structural rather than semantic:
+
+- **A single-document filing set has nothing to scope.** The planner still has to
+  classify, so this saves nothing on its own — noted only because it means
+  scoping logic never runs for the sets loaded here today.
+
+Any skip based on *what the words are* is the thing we are removing. If the
+latency proves unacceptable, the answer is a faster model for the planner or a
+cache keyed on the exact message — not a word list.
 
 ---
 
@@ -242,11 +284,18 @@ responder handles any phrasing but can miscount.
 *My recommendation: give the responder the manifest as structured facts and
 forbid it from computing — counts and lists come pre-computed in the prompt.*
 
-**D4. Do I fix the routing heuristic now or fold it into the planner?**
-The two misroutes above are live. A counter-signal list (`how many documents`,
-`which years`, `list the`, `how many pages`) is a ten-line fix that stops the
-bleeding today. The planner subsumes it later.
-*My recommendation: fix it now, separately. It is a bug, not a feature gap.*
+**D4. What happens to the router's 125 hardcoded tokens?**
+~~Patch the lists now, fold into the planner later.~~ Rejected — patching a word
+list to fix the sentence that broke it fixes only that sentence, and the next
+phrasing falls through the same gap.
+
+So: **the planner replaces the router outright** and the lists are deleted, not
+extended. The open question is only whether anything survives in front of it:
+- **Nothing.** Every message costs one planner call, greetings included.
+- **An exact-message cache.** Same call the first time; free for a repeat of a
+  message seen verbatim. Not a word list — no semantics, no guessing.
+*My recommendation: nothing in front of it to begin with. Measure the latency on
+a greeting, and add the cache only if it actually reads badly.*
 
 **D5. Does a wrong scope ever get to abstain without widening?**
 Widening doubles the worst-case latency of an unanswerable question — 39 readers
@@ -281,7 +330,8 @@ Building a 3M 2018/2022/2023Q2 set from the corpus is the first task.
 |---|---|
 | Wrong document chosen, answer lost | Mandatory widen on empty |
 | Wrong document chosen, answer found in the wrong year | **The real danger.** Same figure, wrong period — the verifier cannot see it, since every digit traces. The checker's period rule is the only guard, and it is a prompt. |
-| Planner adds a call to every question | Heuristic skips: one document, or an unambiguous period match |
+| Planner adds a call to every message, greetings included | Accepted cost of deleting the word lists. If it reads badly, a faster planner model or an exact-message cache — not a heuristic |
+| Provider latency now hits every message | Today a greeting is free. Measured once at 25s for a routing call under load, this is the risk with teeth |
 | Document cards wrong | Seed from filename, confirm from page one, and never let a card *exclude* a document on its own — only rank it lower |
 | Another tier, another thing to go wrong | It is the fourth model in a chain. Worth asking whether the token saving justifies that before building it. |
 
@@ -294,8 +344,10 @@ not less.
 
 ## 8. My honest read
 
-Gap 1b (`corpus_meta`) is worth fixing regardless, is cheap, and carries no
-correctness risk. I would do it whether or not we build a planner.
+Gaps 1b and 1c are worth fixing regardless. Replacing 125 hardcoded tokens with
+one decision removes a whole class of silent misclassification, and it carries no
+document-scoping risk because classification does not scope anything. I would do
+that whether or not we ever narrow a search.
 
 Gap 1a (document scoping) is a real 3× cost on multi-document sets, and the
 saving is genuine. But it buys **cost, not accuracy**, and every previous change
@@ -305,9 +357,16 @@ and be prepared to leave it off.
 
 The order I would propose:
 
-1. Fix the routing misroutes (a bug, today)
-2. Build a multi-document filing set (needed to measure anything)
-3. Document cards at index time (useful on their own — the UI can show them)
-4. `corpus_meta` answered from the manifest
-5. Document scoping for tier 3, behind a setting, with mandatory widen
-6. Measure the rubric, then the tokens
+1. Build a multi-document filing set — nothing below can be measured without one
+2. Document cards at index time — useful on their own, and the planner's input
+3. The planner, replacing the router: classify into four kinds, delete the 125
+   hardcoded tokens. **This alone closes 1b and 1c**, and carries no
+   document-scoping risk because it does not scope yet.
+4. Measure: rubric unchanged, and what a greeting now costs
+5. `corpus_meta` answered from the manifest
+6. Document scoping for tier 3, behind a setting, with mandatory widen
+7. Measure the rubric first and the tokens second
+
+Steps 3 and 6 are separable, and worth separating: step 3 is a correctness fix
+that removes guesswork, step 6 is a cost optimisation that adds a way to be
+wrong. Shipping them together would make a regression impossible to attribute.
