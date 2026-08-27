@@ -1,520 +1,313 @@
-# Planner agent — design proposal
+# The planner
 
-**Status:** proposal, for discussion. Nothing here is implemented.
-**Problem:** the harness executes a fixed strategy. It does not decide *how* to
-attack a question before attacking it.
+**Code:** [`agent/planner.py`](../src/analyst_copilot/agent/planner.py) ·
+[`agent/cards.py`](../src/analyst_copilot/agent/cards.py) ·
+[`agent/facts.py`](../src/analyst_copilot/agent/facts.py)
+
+The planner makes one decision before any work starts: **what does this message
+actually need?**
 
 ---
 
-## 1. The two gaps, measured
+## Why it exists
 
-Both are real. One of them I introduced earlier today.
+Two problems, both measured.
 
-### 1a. Deep search reads every document, always
+**Problem 1: it read every document, every time.**
 
-`DocumentCorpus.shards()` iterates `available_documents()` and shards every page
-of every document. Nothing between the question and the fan-out looks at *which*
-document could possibly hold the answer.
+Say a filing set holds three files: FY2018, FY2022 and FY2023 Q2. You ask "what
+was total revenue in FY2018?".
 
-```python
-# agent/corpus.py — the whole of the scoping logic today
-for doc_name in self.available_documents():
-    pages = self.pages_of(doc_name)
-    for start in range(0, len(pages), pages_per_shard):
-        ...
-```
+The old system read all three. That is 39 reader agents. Only 13 of them could
+possibly find the answer. The other two thirds were wasted time and wasted
+tokens.
 
-So for a filing set of FY2018 / FY2019 / FY2020 and the question *"What was
-total revenue in FY2018?"*:
+**Problem 2: it searched the filing to count the filings.**
 
-| | Readers | Wall clock (concurrency 8) | Cost |
-|---|---:|---:|---:|
-| Today — all three documents | **39** | ~5 waves | 3× |
-| Scoped to FY2018 | **13** | ~2 waves | 1× |
+You ask "how many documents do you have?". The answer is in a list of files. The
+old system searched 189 pages of a 10-K for it.
 
-Two thirds of that work cannot possibly contain the answer. Measured on the
-filing sets actually loaded here:
+Some phrasings worked, some did not:
 
-```text
-ACTIVISION         1 doc   126 pages   13 readers per escalated question
-Boeing 2022        1 doc   189 pages   19 readers per escalated question
-VERIZON_2022_10K   1 doc   115 pages   12 readers per escalated question
-```
-
-Single-document sets hide the problem entirely. It appears the moment a filing
-set holds a year range — which is the case the product was built for: *"a
-question is rarely about one file"*.
-
-### 1b. Questions about the corpus are answered by searching the corpus
-
-*"How many docs have you provided?"* needs no retrieval, no readers and no
-verifier. It needs the collection manifest.
-
-Measured, on the live router:
-
-| Message | Routes to | Correct? |
+| You typed | Old system | Right? |
 |---|---|---|
-| `how many docs?` | `capability` | ✅ (via a model call) |
-| `list the documents` | `capability` | ✅ (via a model call) |
-| `which years are covered by these filings` | `capability` | ✅ (via a model call) |
-| `how many 10-K documents are loaded here` | **`document_question`** | ❌ |
-| `how many pages does this filing have` | **`document_question`** | ❌ |
+| how many docs? | answered from the file list | ✅ |
+| how many pages does this filing have | searched the filing | ❌ |
+| how many 10-K documents are loaded | searched the filing | ❌ |
 
-The two failures are **caused by the routing short-circuit I added earlier
-today** to take a 25-second model call off the critical path:
+The two failures happened because the old router matched words. The word
+`filing` was on a list of finance words. So "how many pages does this **filing**
+have" looked like a question *from* the filing.
 
-- `how many 10-K documents are loaded here` — eight words, and `10-K` contains a
-  digit. Both are document-question signals.
-- `how many pages does this filing have` — `filing` is in the finance-term list.
-
-That optimisation was worth making and it was the wrong shape. A message can
-carry every signal of a document question and still be a question *about* the
-corpus rather than *from* it, and no word list can tell the difference.
-
-### 1c. The routing decision is 125 hardcoded tokens
-
-The real problem is not the two misroutes. It is what produces them:
-
-| In `agent/router.py` | Count |
-|---|---:|
-| `_EXACT_SMALLTALK` phrases | 49 |
-| `_EXACT_CAPABILITY` phrases | 15 |
-| `_FINANCE_TERMS` | 61 |
-| `_LONG_MESSAGE_WORDS` | a magic `8` |
-| **Total hardcoded classification tokens** | **125** |
-
-Every one of those is a guess about how an analyst will phrase something, and
-each is a place the router can be wrong in a way nobody notices until a user
-types the sentence that falls between two lists. `filing` being a finance term is
-correct nine times in ten and wrong for *"how many pages does this filing have"*.
-Adding `how many pages` to a counter-list fixes that sentence and not the next
-one.
-
-A word list cannot classify intent. It can only approximate it, and the
-approximation is now provably leaking.
-
-**All three of these are the same gap.** The system does not decide what kind of
-work a question needs; it pattern-matches its way to a strategy and executes it.
+There were **125 hardcoded words and phrases** doing that job. All of them are
+now deleted. A word list cannot understand a question. It can only guess, and the
+guesses were wrong in ways nobody noticed until someone typed the wrong sentence.
 
 ---
 
-## 2. What a planner is, and is not
+## What it decides
 
-**Is:** one step that looks at the question and the filing set and decides *what
-to run* — reply conversationally, answer from metadata, search one document,
-search all of them, skip the deep path entirely.
+One model call. It sees the message, the recent chat turns, and one line per
+document. It returns four things.
 
-**It replaces the router.** Not "and also does routing" — replaces it. The 125
-hardcoded tokens go, and one model call makes the decision that four word lists
-and a magic number currently approximate. That is the point of the exercise as
-much as the token saving is.
+| It returns | Meaning |
+|---|---|
+| **kind** | Which path to run: `smalltalk`, `capability`, `corpus_meta` or `document` |
+| **question** | The message rewritten so it stands alone |
+| **documents** | Which files could hold the answer. Empty means "all of them" |
+| **confidence** | How sure it is. Below 0.8 we search everything |
 
-**Is not:** a re-ranker, a retriever, or anything that touches evidence. It never
-sees page text and never proposes an answer. It narrows the search space; the
-existing tiers still do the work and the deterministic verifier still has the
-last word.
+### The four kinds
 
-### The central risk, stated first
+| Kind | Example | What runs |
+|---|---|---|
+| `smalltalk` | "Hi", "thanks" | A friendly reply. Nothing else |
+| `capability` | "what can you do?" | A reply about the assistant |
+| `corpus_meta` | "how many documents?" | Answered from the file list. No search |
+| `document` | "what was FY2018 revenue?" | The full search pipeline |
 
-**A planner that scopes wrongly is worse than no planner.**
+The line between `corpus_meta` and `document` is **what the question is about**.
+"How many documents do you have" is about the *set*. "How many segments does 3M
+report" is about what is *inside* a filing, so it needs reading. "How many" alone
+proves nothing.
 
-Today's fan-out is expensive and has no recall ceiling: the answer is in the
-document, so some reader will see it. A planner that picks FY2019 when the answer
-is in FY2018 makes the answer **unreachable** — and the rubric charges for that:
-a missed answer is 0, and an answer read confidently from the wrong year is
-**−1**.
+### Rewriting the question
 
-The measured history of this project is a warning here. The first cut of the
-harness scored **−1 against the fast path's +2** because it answered more and
-abstained less. Anything that narrows the search must be assumed to narrow it
-wrongly sometimes, and must be designed around that.
+If you ask "and the year before?", that cannot be searched for. Nobody
+downstream knows what "the year before" means.
 
-So the planner gets one non-negotiable property:
+So the planner rewrites it once, at the top:
 
-> **Scoping is a hypothesis, not a commitment.** If the scoped search finds
-> nothing, the search widens automatically before the system abstains.
+```
+you typed:  and the year before?
+researched: What was 3M's capital expenditure in FY2017?
+```
 
-That turns a wrong scope into *lost time* instead of *a lost answer*.
+Every step below then gets a question that makes sense on its own. This also
+fixed a real bug: the checker never sees the chat history, so it used to be asked
+"is this answer responsive to 'and the year before?'" and could not possibly
+know.
 
 ---
 
-## 3. Proposed flow
+## The flow
 
 ```mermaid
 flowchart TD
-    MSG([user message]) --> PLAN
+    MSG([your message]) --> PLAN
 
-    PLAN[["PLANNER — replaces the router<br/>sees: the question, the document cards,<br/>recent turns. Never page text, never evidence."]]
+    PLAN[["PLANNER<br/>sees the question, the chat history,<br/>and one line per document"]]
 
-    PLAN --> KIND{what work does<br/>this need?}
+    PLAN --> KIND{what does<br/>it need?}
 
-    KIND -->|not about a document| CONV["conversational reply<br/>greeting, or what the assistant is"]
-    KIND -->|about the corpus itself| META["answer from the manifest<br/>doc count, names, years, page counts<br/><b>no retrieval, no readers</b>"]
-    KIND -->|from the documents| SCOPE["choose documents<br/>+ is the deep path worth it?"]
+    KIND -->|smalltalk<br/>capability| CHAT[friendly reply]
+    KIND -->|corpus_meta| FACTS[answer from the file list]
+    KIND -->|document| SEARCH[the search pipeline<br/>scoped to the chosen files]
 
-    SCOPE --> T1[TIER 1 · hybrid retrieval]
-    T1 --> T2[TIER 2 · checker<br/>whole cited page]
-    T2 -->|correct| DONE([answer + citation])
-    T2 -->|doubted| GATE
-    T1 -->|abstained| GATE
+    CHAT -->|"reply says<br/>NEEDS_DOCUMENT"| SEARCH
+    FACTS -->|"the file list<br/>cannot answer it"| SEARCH
 
-    GATE{deep path<br/>worth running?}
-    GATE -->|no| ABSTAIN([not found in this filing])
-    GATE -->|yes| T3[TIER 3 · readers over<br/>the chosen documents only]
+    SEARCH --> T1[tier 1 · retrieval] --> T2[tier 2 · checker]
+    T2 -->|correct| DONE([answer + page])
+    T2 -->|doubted| T3
+    T1 -->|nothing found| T3
 
-    T3 --> FOUND{anything found?}
-    FOUND -->|yes| VERIFY[verify → checker] --> DONE
-    FOUND -->|no, scope was narrowed| WIDEN["WIDEN<br/>re-run over the documents<br/>the planner excluded"]
-    WIDEN --> FOUND2{anything found?}
-    FOUND2 -->|yes| VERIFY
-    FOUND2 -->|no| ABSTAIN
-    FOUND -->|no, scope was everything| ABSTAIN
+    T3[tier 3 · read every page<br/>of the chosen files] --> FOUND{found?}
+    FOUND -->|yes| DONE
+    FOUND -->|"no, and files<br/>were skipped"| WIDEN[read the skipped files too]
+    WIDEN --> FOUND2{found?}
+    FOUND2 -->|yes| DONE
+    FOUND2 -->|no| STOP([not found in this filing])
+    FOUND -->|no| STOP
 
-    CONV --> DONE2([reply, nothing cited])
-    META --> DONE2
+    CHAT --> REPLY([reply, nothing cited])
+    FACTS --> REPLY
 ```
 
-The planner sits where the router sits today, and answers a wider question. The
-four intent classes replace three; `documents` and `deep_path` are new.
-Everything below the planner is the pipeline that exists now.
+Notice the two arrows pointing back into `SEARCH`. Those are the escape hatches,
+and they are the most important part.
 
 ---
 
-## 3a. How it decides — and what a wrong decision costs
+## No decision is final
 
-The worry is the right one: this is a single point of failure in front of
-everything. The answer is not "the planner will be accurate". It is that **no
-planner decision is allowed to be terminal.**
+The worry with a planner is obvious: it is one guess in front of everything. Get
+it wrong and the whole answer is wrong.
 
-### The failure matrix
+So every branch has a way out. **A wrong guess costs a few seconds, never the
+answer.**
 
-Wrong decisions are not equal. Some are self-correcting and some destroy the
-answer:
+### Not all mistakes are equal
 
-| Planner says | Actually | Cost | Recoverable? |
-|---|---|---|---|
-| `document` | smalltalk | A few seconds, and "not found in this filing" to "hi" | ✅ self-corrects — it abstains |
-| `document` | `corpus_meta` | Wasted search, honest abstention | ✅ self-corrects |
-| `smalltalk` / `capability` | a real question | **Answered from nothing** | ❌ **terminal today** |
-| `corpus_meta` | a real question | **Answered from the manifest, confidently** | ❌ **terminal today** |
-| scoped to FY2019 | answer is in FY2018 | Answer unreachable | ❌ unless the search widens |
-| scoped to FY2019 | FY2019 *has* a similar figure | **Wrong period, every digit traces** | ❌ **the dangerous one** |
-
-Note the shape: **misrouting *into* the document path is harmless — it abstains.
-Misrouting *out of* it is fatal.** That is why the current router prompt says to
-resolve doubt toward the document, and the planner inherits that bias.
-
-### Every branch gets a fallback
-
-The three ❌ rows above are only terminal because nothing catches them today.
-They do not have to be:
-
-```mermaid
-flowchart LR
-    P{planner} -->|smalltalk / capability| C[conversational reply]
-    C -->|"reply would need<br/>the document"| S
-    P -->|corpus_meta| M[answer from manifest]
-    M -->|"not answerable<br/>from metadata"| S
-    P -->|document, scoped| S[search]
-    S -->|"scoped search<br/>found nothing"| W[widen to all documents]
-    W -->|still nothing| A([abstain])
-    S --> A
-```
-
-Three cheap guards, one per branch:
-
-1. **Conversational escape.** The responder is already forbidden from stating a
-   figure from a filing. Give it one more option: *"this needs the document"* —
-   and that answer re-enters the pipeline as a document question. A misrouted
-   greeting costs one wasted short call.
-2. **Metadata escape.** `corpus_meta` answers come from computed facts, not from
-   a model counting. If the question asks something the manifest does not contain,
-   there is nothing to answer *with*, and it falls through to search.
-3. **Widen on empty.** Already in the proposal, and mandatory.
-
-With those, a wrong planner decision costs **latency, not an answer**. That is
-the whole argument for letting a model make this decision at all.
-
-### What the last row needs, and does not have
-
-The `wrong period, every digit traces` row is not fixed by any fallback, because
-the search *succeeds* — it just succeeds on the wrong document. The verifier
-cannot see it: every figure is genuinely on the cited page.
-
-The only guard is the checker's period rule, and that is a prompt. This failure
-already exists — one of the three current −1s is a quick ratio read from the
-March balance sheet when the question asked about Q2 — and **narrowing to the
-wrong document makes it more likely, not less.**
-
-This is the strongest argument for shipping classification before scoping, and
-for scoping conservatively when it does ship. It is also the reason D2 matters.
-
-### What it decides *from*
-
-| Signal | Available today | Notes |
+| Planner says | Truth | What happens |
 |---|---|---|
-| The question text | ✅ | |
-| Recent turns | ✅ | See §3b — already plumbed |
-| Document names | ✅ | User-controlled, so a hint not a fact |
-| Company / fiscal year / period covered | ❌ | This is what document cards are for (§4a) |
-| Page counts, formats | ✅ | On the manifest already |
+| `document` | it was "hi" | We search, find nothing, say so. Slightly silly. Harmless |
+| `smalltalk` | it was a real question | We answer from nothing. **Bad** |
+| `corpus_meta` | it was a real question | We answer from the file list. **Bad** |
+| search only FY2018 | answer is in FY2022 | The answer is unreachable. **Bad** |
 
-The categories are structurally different, which is what makes this tractable:
-`corpus_meta` asks about the *collection* ("how many", "which years", "what
-files"), `document` asks about a *fact inside* one, `smalltalk` has no subject at
-all. That is a distinction a model handles well and a word list handles badly —
-which is the argument of §1c.
+The pattern: **guessing "search the document" is safe. Guessing the other way is
+not.** So the planner is told to pick `document` whenever it is unsure.
 
-The planner should also be required to state its reasoning and a confidence, and
-**low confidence must mean "do not narrow"** rather than "guess".
+### The three escapes
 
----
+**1. The chat reply can refuse.**
 
-## 3b. Conversation history — what exists today
+If the planner sends a real question to the chat path, the reply is allowed to
+answer with exactly `NEEDS_DOCUMENT` instead of guessing. The message then goes
+back and gets searched properly.
 
-Checked, because the planner would depend on it.
+Tested live:
 
-**It is fully plumbed.** `POST /chat` and `/chat/stream` load the thread's
-messages from Postgres and pass them down:
-
-```text
-_history()  →  reads conversation.messages for this user's thread
-format_history(turns, limit=6, max_chars=400)
-    ↓
-Analyst: What was 3M FY2018 capex?
-Assistant: $1,577 million (3M_2018_10K, page 60).
-Analyst: and the year before?
+```
+"What was FY2018 revenue?"  →  planner said smalltalk
+                            →  reply said NEEDS_DOCUMENT
+                            →  searched properly, answer found
 ```
 
-| Stage | Sees history |
-|---|---|
-| Router | ✅ |
-| Decomposer | ✅ |
-| Conversational responder | ✅ |
-| Readers (as `context`) | ✅ |
-| Synthesis (as `context`) | ✅ |
-| **Checker** | ❌ |
+**2. The file list can refuse.**
 
-Trimmed hard on purpose — six turns, 400 characters each — because a full
-transcript invites a model to answer from a previous turn's figures instead of
-from the document, which is how a citation ends up attached to a number it never
-proved.
+`corpus_meta` answers come from facts counted in Python, not by the model. If the
+question asks something the file list does not contain, there is nothing to answer
+with, so it falls through to a real search.
 
-### The gap this check found
+**3. A scoped search widens.**
 
-**The checker never sees history, and it is asked to judge questions that need
-it.** For a follow-up like *"and the year before?"*, the checker receives that
-literal string plus a proposed answer about FY2017, and is asked whether the
-answer is *responsive*. It cannot possibly tell.
+If the planner picks FY2018 and FY2018 holds nothing, we then read the files it
+skipped. Both passes are counted in the reported cost, so you see what the
+question really took.
 
-Two ways to fix it, and they are not equivalent:
+### The one case with no escape
 
-- **Thread context into the checker too.** A seventh place that has to be kept in
-  step, and it reintroduces the bias the trimming exists to prevent — a checker
-  that has read the previous answer is more likely to bless a consistent wrong one.
-- **Have the planner resolve the question once.** Rewrite *"and the year
-  before?"* into *"What was 3M's capital expenditure in FY2017?"* at the top of
-  the pipeline, and every stage below receives a self-contained question. The
-  checker needs no history because the question no longer depends on any.
+There is one mistake no fallback catches.
 
-The second is better, and it is a further argument for the planner: **question
-resolution belongs with the component that already has to read the question and
-the history to classify it.** It also fixes decomposition, which today only
-rewrites when it splits — a single follow-up passes through unresolved.
+Suppose the planner searches only FY2022, and FY2022 *also* has a revenue
+figure. We find it. Every digit is genuinely on the page, so the verifier is
+happy. But it is the wrong year.
 
-I would add `resolved_question` to the planner's output and treat the original
-message as display-only.
+This already happens. One of the three current wrong answers is a quick ratio
+taken from the March balance sheet when the question asked about June.
+
+**Narrowing the search makes this more likely, not less.** That is why scoping is
+careful by default, and why the checker's period rule matters so much.
 
 ---
 
-## 4. The pieces
+## Document cards
 
-### 4a. Document cards — the planner's input
+The planner cannot choose between files it knows nothing about. So each file gets
+one line, built from its filename. No model call, no page reads.
 
-The planner cannot choose documents it knows nothing about. Today a collection
-manifest holds only this per document:
-
-```json
-{"doc_name": "3M_2018_10K", "source_file": "...", "source_format": "html",
- "segment_count": 131, "added_at": 1787...}
+```
+3M_2018_10K (131 pages) — 3M — FY2018 — 10-K — reports figures for 2018, 2017, 2016
+3M_2023Q2_10Q (60 pages) — 3M — FY2023 Q2 — 10-Q — reports figures for 2023, 2022
+document1 — period unknown, cannot be ruled out
 ```
 
-No company, no fiscal year, no period, no document type. So a planner would have
-to guess from the filename — which is user-controlled and often wrong.
+**The "reports figures for" part matters most.** A 10-K prints three years of
+income statement and cash flow. So a 2019 10-K answers a 2017 question. A planner
+that only knew "this is the 2019 filing" would send a 2017 question to the wrong
+file, or to no file at all.
 
-Proposal: extract a small **document card** once, at index time, and store it on
-the manifest.
+| Document type | Years of figures |
+|---|---:|
+| 10-K, 20-F, annual report | 3 |
+| 10-Q | 2 |
+| 8-K | 1 |
 
-```json
-{"doc_name": "3M_2018_10K",
- "company": "3M Company",
- "fiscal_year": 2018,
- "period": "FY2018",
- "doc_type": "10-K",
- "period_covered": ["2018", "2017", "2016"],
- "segment_count": 131}
+**A card is a hint, not a fact.** Filenames come from users. A file called
+`document1.pdf` gets a card with nothing in it, and the rule is that a file we
+cannot describe is **never excluded** — only ranked lower. Guessing wrong about a
+filename must cost nothing.
+
+---
+
+## How scoping is kept safe
+
+Three guards, in code, not in a prompt.
+
+**1. Only narrow when the question names a year.** Then the choice can be checked
+against the cards instead of trusted. This is the careful policy and it is the
+default.
+
+**2. Put back any file that reports a named year.** Whatever the planner
+proposed, if a file's card says it reports 2018 and the question asks about 2018,
+it goes back in. A filename hint must not be able to exclude a file that
+demonstrably covers the period.
+
+**3. Ignore a scope that matches nothing.** If the planner names files this
+filing set does not hold, we search everything rather than searching nothing.
+
+Plus: a scope naming *every* file is treated as no scope at all, and a
+single-file set is never scoped, because there is nothing to choose.
+
+---
+
+## Measured
+
+Live, on a three-document set:
+
+| Message | Kind | Files searched |
+|---|---|---|
+| Hi | `smalltalk` | none |
+| How many docs you have provided? | `corpus_meta` | none |
+| how many pages does this filing have | `corpus_meta` | none |
+| What is the total revenue in FY2018? | `document` | **3M_2018_10K only** |
+| How did margin move from 2018 to 2022? | `document` | all |
+| how many segments does 3M report | `document` | all |
+
+Row 3 was a search of 189 pages before. Row 4 is one file instead of three.
+Row 6 is the one that proves it understands the difference: "how many" did not
+fool it.
+
+End to end through the running app:
+
+```
+0.1s  planning
+0.1s  planner running
+10.3s planner: corpus_meta — the question asks about the document set itself
+12.3s answer: "I have one document loaded: 3M's 2018 Form 10-K."
 ```
 
-`period_covered` matters more than it looks: a 2019 10-K carries **three years**
-of income statement and cash flow columns. A planner that scopes *"FY2017
-revenue"* to a document named `..._2019_10K` is right, and one that reasons only
-from `fiscal_year: 2019` is wrong. This field is why the Activision three-year
-average worked at all.
+No retrieval. No readers. It used to read 134 pages for this.
 
-Cost: one cheap call per document at index time, cached forever. Indexing already
-takes minutes; this is noise. Regex on the filename can seed it and the first
-page can confirm it.
+---
 
-### 4b. What the planner decides
+## Settings
 
-| Decision | Values | Consequence |
+All in [`config/settings.py`](../src/analyst_copilot/config/settings.py).
+
+| Setting | Default | What it does |
 |---|---|---|
-| `kind` | `smalltalk` \| `capability` \| `corpus_meta` \| `document` | Which path runs at all |
-| `documents` | subset of the filing set | What tier 1 and tier 3 may look at |
-| `resolved_question` | a self-contained rewrite | "and the year before?" becomes answerable on its own — see §3b |
-| `confidence` | low \| high | Low confidence ⇒ do not narrow at all |
-| `deep_path` | worth it \| not | Whether an abstention should escalate |
-
-### 4c. Where it runs
-
-**First. In place of the router.** One call on the critical path, and it must be
-cheap: the document cards are small and the question is short, so it is a few
-hundred tokens either way.
-
-What it costs, honestly:
-
-| | Today | With the planner |
-|---|---|---|
-| Greeting | 0 calls (literal match) | **1 call** |
-| Obvious document question | 0 calls (heuristic) | **1 call** |
-| Ambiguous message | 1 call (router) | 1 call |
-| Document question needing scoping | 1 call (router) + no scoping | 1 call |
-
-So it is *cheaper* than router-plus-planner would be, and **more expensive than
-today for the two cases the heuristics currently catch for free**. That is the
-price of the 125 tokens going away, and it is a real price: the measurement that
-motivated the heuristics was a 25-second routing call against a slow provider.
-
-The one skip I would still argue for is structural rather than semantic:
-
-- **A single-document filing set has nothing to scope.** The planner still has to
-  classify, so this saves nothing on its own — noted only because it means
-  scoping logic never runs for the sets loaded here today.
-
-Any skip based on *what the words are* is the thing we are removing. If the
-latency proves unacceptable, the answer is a faster model for the planner or a
-cache keyed on the exact message — not a word list.
+| `planner_enabled` | `true` | Off means every message is treated as a document question |
+| `planner_scope_documents` | `true` | Off means every file is read on every deep search |
+| `planner_scope_requires_year` | `true` | The careful policy. Off lets the planner narrow on its own judgement |
+| `planner_min_confidence` | `0.8` | Below this, search everything |
+| `planner_widen_on_empty` | `true` | **Turning this off removes the safety net** |
 
 ---
 
-## 5. Decisions I need from you
+## What it costs
 
-**D1. Does the planner scope tier 1 as well, or only tier 3?**
-Tier 1 is cheap and cross-document ranking is deliberate — pooling candidates
-across documents before normalising is what makes a folder answerable at all
-(see [docs/14](14-collections.md)). Narrowing it saves little and risks the
-retrieval quality that everything else rests on.
-*My recommendation: tier 3 only, at first.* Measure, then decide about tier 1.
+One model call on every message, including "hi".
 
-**D2. How aggressive should scoping be?**
-- **Conservative** — narrow only when the question names a period that exactly
-  one card covers. Few questions qualify; near-zero risk.
-- **Confident** — narrow whenever the planner is sure, widen on empty.
-- **Aggressive** — always pick the single best document first, widen on empty.
-*My recommendation: confident, with the widen fallback mandatory.*
+The old router got greetings and obvious questions free, using those 125
+hardcoded words. That was faster and it was wrong. A routing call was once
+measured at 25 seconds against a slow provider, so this is a real cost, not a
+theoretical one.
 
-**D3. `corpus_meta` — templated answers or an LLM with the manifest?**
-A templated answer ("3 documents: A, B, C") cannot be wrong but cannot handle
-"which years do these cover?". Handing the manifest to the conversational
-responder handles any phrasing but can miscount.
-*My recommendation: give the responder the manifest as structured facts and
-forbid it from computing — counts and lists come pre-computed in the prompt.*
-
-**D4. What happens to the router's 125 hardcoded tokens?**
-~~Patch the lists now, fold into the planner later.~~ Rejected — patching a word
-list to fix the sentence that broke it fixes only that sentence, and the next
-phrasing falls through the same gap.
-
-So: **the planner replaces the router outright** and the lists are deleted, not
-extended. The open question is only whether anything survives in front of it:
-- **Nothing.** Every message costs one planner call, greetings included.
-- **An exact-message cache.** Same call the first time; free for a repeat of a
-  message seen verbatim. Not a word list — no semantics, no guessing.
-*My recommendation: nothing in front of it to begin with. Measure the latency on
-a greeting, and add the cache only if it actually reads badly.*
-
-**D5. Does a wrong scope ever get to abstain without widening?**
-Widening doubles the worst-case latency of an unanswerable question — 39 readers
-after 13. The alternative is abstaining on a question whose answer is present.
-*My recommendation: always widen. An abstention we could have answered is the
-expensive kind of wrong.*
+If it becomes a problem, the fix is a faster model for the planner, or a cache
+keyed on the exact message. **Not another word list.**
 
 ---
 
-## 6. How we would know it worked
+## Tests
 
-The planner is a **cost** optimisation with a **correctness** risk, so it needs
-both measured, and the correctness one first.
+```bash
+PYTHONPATH=src pytest tests/test_agent_planner.py    # cards, facts, the scope guards
+PYTHONPATH=src pytest tests/test_agent_pipeline.py   # the escapes, and widening
+```
 
-| Metric | Target | Why |
-|---|---|---|
-| Rubric score on the practice key | **unchanged or better** | The gate. A planner that saves tokens and loses a mark is a regression. |
-| Readers per escalated question | down | The point. |
-| Widen rate | low | High means the scoping is guessing. |
-| Answers rescued by widening | should be **> 0** | If never, the fallback is untested rather than unnecessary. |
-| `corpus_meta` questions reaching retrieval | **0** | Gap 1b closed. |
-
-A multi-document filing set is needed to measure any of this — every set loaded
-here today has one document, which is precisely why the gap went unnoticed.
-Building a 3M 2018/2022/2023Q2 set from the corpus is the first task.
-
----
-
-## 7. What could go wrong
-
-| Risk | Mitigation |
-|---|---|
-| Wrong document chosen, answer lost | Mandatory widen on empty |
-| Wrong document chosen, answer found in the wrong year | **The real danger.** Same figure, wrong period — the verifier cannot see it, since every digit traces. The checker's period rule is the only guard, and it is a prompt. |
-| Planner adds a call to every message, greetings included | Accepted cost of deleting the word lists. If it reads badly, a faster planner model or an exact-message cache — not a heuristic |
-| Provider latency now hits every message | Today a greeting is free. Measured once at 25s for a routing call under load, this is the risk with teeth |
-| Document cards wrong | Seed from filename, confirm from page one, and never let a card *exclude* a document on its own — only rank it lower |
-| Another tier, another thing to go wrong | It is the fourth model in a chain. Worth asking whether the token saving justifies that before building it. |
-
-The second row is the one to think hardest about. It is the failure mode the
-harness already has — three of the current −1s are wrong-period or wrong-scope
-answers — and a planner that narrows to the wrong document makes it *more* likely,
-not less.
-
----
-
-## 8. My honest read
-
-Gaps 1b and 1c are worth fixing regardless. Replacing 125 hardcoded tokens with
-one decision removes a whole class of silent misclassification, and it carries no
-document-scoping risk because classification does not scope anything. I would do
-that whether or not we ever narrow a search.
-
-Gap 1a (document scoping) is a real 3× cost on multi-document sets, and the
-saving is genuine. But it buys **cost, not accuracy**, and every previous change
-in this project that traded correctness for reach cost more than it gained. I
-would build it behind a setting, measure the rubric first and the tokens second,
-and be prepared to leave it off.
-
-The order I would propose:
-
-1. Build a multi-document filing set — nothing below can be measured without one
-2. Document cards at index time — useful on their own, and the planner's input
-3. The planner, replacing the router: classify into four kinds, resolve the
-   question into a self-contained form, delete the 125 hardcoded tokens.
-   **This alone closes 1b, 1c and the checker's missing context**, and carries no
-   document-scoping risk because it does not scope yet.
-   Ship the two escape hatches with it (§3a) so no classification is terminal.
-4. Measure: rubric unchanged, and what a greeting now costs
-5. `corpus_meta` answered from the manifest
-6. Document scoping for tier 3, behind a setting, with mandatory widen
-7. Measure the rubric first and the tokens second
-
-Steps 3 and 6 are separable, and worth separating: step 3 is a correctness fix
-that removes guesswork, step 6 is a cost optimisation that adds a way to be
-wrong. Shipping them together would make a regression impossible to attribute.
+All offline. The scope guards are the part worth reading: they are what stops the
+planner losing an answer, and each one has a test named after the mistake it
+prevents.
