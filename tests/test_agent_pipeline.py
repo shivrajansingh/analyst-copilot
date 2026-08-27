@@ -166,6 +166,34 @@ def test_anything_that_might_be_a_question_goes_to_the_document(message):
     assert IntentRouter(None).route(message).intent is Intent.DOCUMENT_QUESTION
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What is the FY2018 capital expenditure amount for 3M?",
+        "capex 2022",
+        "What drove the change in operating margin?",
+        "total debt",
+        "Show me revenue for the last three years",
+        "net income $ millions",
+    ],
+)
+def test_an_obvious_document_question_costs_no_model_call(message):
+    """
+    Classifying "What was FY2018 capex?" was a full round trip -- measured at 25s
+    against a slow provider -- on the critical path of every question, to reach a
+    conclusion the heuristics reach for free.
+    """
+    routing = IntentRouter(None).route(message)
+    assert routing.intent is Intent.DOCUMENT_QUESTION
+    assert routing.matched_literally, "should not have needed the model"
+
+
+@pytest.mark.parametrize("message", ["how are you", "how are you doing", "hows it going"])
+def test_the_short_circuit_does_not_swallow_social_messages(message):
+    """The exact matches are checked first, so these stay small talk."""
+    assert IntentRouter(None).route(message).intent is Intent.SMALLTALK
+
+
 def test_punctuation_and_case_do_not_defeat_the_literal_match():
     assert normalize_message("  Hello!!  ") == "hello"
 

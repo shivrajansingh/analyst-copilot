@@ -315,6 +315,10 @@ You are the gate before a second, much more expensive search runs. Marking a
 sound answer `incorrect` wastes that; marking a wrong answer `correct` puts a
 wrong figure in front of an analyst. The second mistake is far worse.
 
+Before any tool call, say in **one short sentence** what you are checking. An
+analyst is watching this happen and that sentence is what they see; keep it to a
+line and make it true.
+
 Finish by calling `report_validation` exactly once."""
 
 

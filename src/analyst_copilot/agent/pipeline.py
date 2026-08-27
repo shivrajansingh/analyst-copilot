@@ -361,7 +361,10 @@ class AnalystAgent:
             return _served("no parsed pages to check the answer against")
 
         _emit(on_stage, StageEvent(Stage.VALIDATING, "checking the answer", **located))
-        return self._checker().check(
+        tracing.emit(
+            on_trace, tracing.agent_status("checker", tracing.AgentStatus.RUNNING)
+        )
+        validation = self._checker().check(
             question=question,
             answer=fast.answer,
             doc_name=fast.doc_name,
@@ -371,6 +374,8 @@ class AnalystAgent:
             evidence_snippet=fast.evidence_snippet,
             on_trace=on_trace,
         )
+        _report_verdict(on_trace, validation)
+        return validation
 
     def _deep_path(
         self,
@@ -489,7 +494,10 @@ class AnalystAgent:
         """
         if not self._settings.agent_validate_answers or scope.corpus is None:
             return _served("validation disabled")
-        return self._checker().check(
+        tracing.emit(
+            on_trace, tracing.agent_status("checker", tracing.AgentStatus.RUNNING)
+        )
+        validation = self._checker().check(
             question=question,
             answer=result.answer,
             doc_name=verdict.doc_name,
@@ -500,6 +508,8 @@ class AnalystAgent:
             inputs=result.inputs,
             on_trace=on_trace,
         )
+        _report_verdict(on_trace, validation)
+        return validation
 
     # -- scope -------------------------------------------------------------- #
     def _resolve_scope(self, collection: Optional[str], doc_name: Optional[str]) -> Scope:
@@ -695,6 +705,28 @@ def _relocate_event(event: StageEvent, located: dict) -> StageEvent:
     event.part = located.get("part")
     event.part_total = located.get("part_total")
     return event
+
+
+def _report_verdict(on_trace, validation) -> None:
+    """
+    Report what the checker concluded, in its own words.
+
+    Its reason is the single most informative line in the whole feed -- it says
+    why an answer was believed or doubted -- and it is text the model actually
+    wrote, so showing it invents nothing.
+    """
+    if validation.reason:
+        tracing.emit(
+            on_trace,
+            tracing.thought("checker", f"{validation.verdict.value}: {validation.reason}"),
+        )
+    tracing.emit(
+        on_trace,
+        tracing.agent_status(
+            "checker",
+            tracing.AgentStatus.FOUND if validation.serves else tracing.AgentStatus.EMPTY,
+        ),
+    )
 
 
 def _served(reason: str) -> Validation:

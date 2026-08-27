@@ -60,6 +60,31 @@ _EXACT_CAPABILITY = frozenset(
 _PUNCTUATION = re.compile(r"[^a-z0-9\s]")
 _SPACES = re.compile(r"\s+")
 
+# Signals that a message is unmistakably about a document, checked before the
+# model is asked. Classifying "What was FY2018 capex?" costs a full round trip --
+# measured at 25s against a slow provider -- on the critical path of every
+# question, to reach a conclusion these rules already reach for free.
+#
+# Biased deliberately: a false positive here sends a borderline social message to
+# retrieval, which abstains. A false negative answers a real question from
+# nothing. The prompt says to resolve doubt toward the document and so does this.
+_FINANCE_TERMS = frozenset(
+    """
+    revenue revenues sales capex expenditure expenditures margin margins ebitda
+    income earnings profit loss cash flow flows debt equity assets liabilities
+    inventory receivables payables dividend dividends buyback shares eps ratio
+    liquidity leverage segment segments guidance outlook risk risks tax taxes
+    depreciation amortization amortisation goodwill impairment ppe pp&e
+    balance statement filing fiscal quarter quarterly annual year yoy
+    growth decline increase decrease acquisition acquisitions
+    """.split()
+)
+_YEAR = re.compile(r"\b(?:fy|cy)?\s?(?:19|20)\d{2}\b")
+_HAS_DIGIT = re.compile(r"\d")
+
+# A message this long is a question, whatever else it contains.
+_LONG_MESSAGE_WORDS = 8
+
 
 @dataclass
 class Routing:
@@ -67,6 +92,24 @@ class Routing:
     reason: str = ""
     #: True when the classification cost no model call.
     matched_literally: bool = False
+
+
+def looks_like_document_question(message: str, normalized: str) -> bool:
+    """
+    Whether a message is obviously about the document, without asking a model.
+
+    Deliberately loose, because the cost of the two errors is asymmetric: a
+    social message routed here abstains, while a real question routed to small
+    talk is answered from nothing.
+    """
+    words = normalized.split()
+    if len(words) >= _LONG_MESSAGE_WORDS:
+        return True
+    if _YEAR.search(normalized) or _HAS_DIGIT.search(normalized):
+        return True
+    if "$" in message or "%" in message:
+        return True
+    return any(word in _FINANCE_TERMS for word in words)
 
 
 def normalize_message(message: str) -> str:
@@ -92,8 +135,14 @@ class IntentRouter:
         if text in _EXACT_CAPABILITY:
             return Routing(Intent.CAPABILITY, "matched a known capability question", True)
 
-        # A very short message with no question in it and no figures is almost
-        # never a filing question, but "capex 2022" is, so the model decides.
+        # Checked after the exact matches, so "how are you" stays small talk.
+        if looks_like_document_question(message, text):
+            return Routing(
+                Intent.DOCUMENT_QUESTION, "reads as a question about the document", True
+            )
+
+        # What is left is genuinely ambiguous -- short, wordy, no figures. The
+        # model decides, and errs toward the document.
         if self._chat is None:
             return Routing(Intent.DOCUMENT_QUESTION, "no classifier available")
 
