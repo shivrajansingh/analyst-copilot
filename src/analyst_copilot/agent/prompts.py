@@ -222,20 +222,33 @@ You are given the question, the proposed answer, and the full text of the page i
 was cited to. Decide one thing: **is this answer correct, complete, and supported
 by that page?**
 
-Check, in this order:
+Check, in this order. The first four are where well-sourced answers actually go
+wrong, and every one of them passes a check that only looks at whether the
+figures exist on the page.
 
-1. **Responsive.** Does it answer the question that was asked? An answer about
-   the wrong fiscal year, the wrong entity, or a segment when the question asked
-   for the consolidated total is incorrect, however well-sourced.
-2. **Complete.** If the question asked several things, does the answer address
+1. **Direction.** If the question asks *is / does / has / should* — "is this
+   business capital-intensive", "does it have healthy liquidity" — the answer is
+   a conclusion, and the conclusion has to follow from the figures. An answer
+   that says "Yes" while its own figures argue "No" is **incorrect**, however
+   well-sourced. Work out what the figures imply before reading what the answer
+   concluded.
+2. **Period.** The question names a period — "Q2 of FY2023", "FY2022", "at year
+   end". Are the figures from that period's column? Watch for an answer that
+   quietly substitutes a different balance-sheet date, or reads the prior-year
+   column, or answers about the quarter when asked about the year. This is the
+   single most common way a correct-looking answer is wrong.
+3. **The form asked for.** A question asking *which* or *what* wants the items,
+   not a count of them: "four debt securities are registered" does not answer
+   "which debt securities are registered". A list must also contain only items
+   that qualify — one extra item that does not belong makes the answer
+   incorrect, not merely untidy.
+4. **Complete.** If the question asked several things, does the answer address
    all of them? A half-answer is `insufficient`, not `correct`.
-3. **Supported.** Is every figure in the answer either printed on this page, or
+5. **Responsive.** An answer about the wrong entity, or about a segment when the
+   question asked for the consolidated total, is incorrect.
+6. **Supported.** Is every figure in the answer either printed on this page, or
    computable from figures printed on this page? Re-do any arithmetic with
-   `calculate` — do not check it in your head. A figure that traces to nothing
-   on this page is incorrect.
-4. **Right column.** If the figure came from a table, is it from the column for
-   the period the question asked about? This is the most common way a
-   well-formed answer is wrong.
+   `calculate` — do not check it in your head.
 
 Verdicts:
 - `correct` — responsive, complete, and every figure supported. Serve it.
@@ -245,13 +258,28 @@ Verdicts:
 
 Be strict but not pedantic. Rounding, units stated differently, extra correct
 context, and a different phrasing are all fine. `8.7 billion` is a correct
-reading of a page printing `8,738` under "Dollars in millions".
+reading of a page printing `8,738` under "Dollars in millions". A terser answer
+than you would have written is fine if it is right.
+
+What is *not* pedantic: a different conclusion, a different period, a different
+figure, or a list that is missing an item or carries one too many.
 
 You are the gate before a second, much more expensive search runs. Marking a
 sound answer `incorrect` wastes that; marking a wrong answer `correct` puts a
 wrong figure in front of an analyst. The second mistake is far worse.
 
 Finish by calling `report_validation` exactly once."""
+
+
+DERIVED_NOTE = """\
+This figure is **computed, not printed**. A deterministic check has already
+traced every input below to the page it was read from and re-run the arithmetic
+exactly, and both passed. So do NOT mark this incorrect because the figure does
+not appear on the page — that is expected and correct.
+
+Judge the reasoning instead: are these the right figures for the question (right
+period, right entity, right line items), and is this the right operation to
+apply to them?"""
 
 
 def build_validator_prompt(
@@ -262,6 +290,8 @@ def build_validator_prompt(
     page_text: str,
     evidence_snippet: str = "",
     max_chars: int = 24000,
+    computation: str = "",
+    inputs: Sequence["object"] = (),
 ) -> str:
     body = page_text[:max_chars]
     clipped = (
@@ -271,11 +301,24 @@ def build_validator_prompt(
         else ""
     )
     quoted = f"\n\nThe snippet it offered as evidence:\n{evidence_snippet}" if evidence_snippet else ""
+
+    derived = ""
+    if computation:
+        traced = "\n".join(
+            f"  - {item.label} = {item.value}"
+            + (f" (page {item.page + 1})" if getattr(item, "page", None) is not None else "")
+            for item in inputs
+        )
+        derived = (
+            f"\n\n{DERIVED_NOTE}\n\nExpression: {computation}"
+            + (f"\nInputs:\n{traced}" if traced else "")
+        )
+
     return f"""Question:
 {question}
 
 Proposed answer:
-{answer}
+{answer}{derived}
 
 Cited location: {doc_name}, {page_label}{quoted}
 

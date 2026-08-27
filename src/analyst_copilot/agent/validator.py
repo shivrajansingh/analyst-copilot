@@ -10,16 +10,26 @@ cost the most marks in the measured run:
   still not the answer.
 - **Half an answer.** A compound question answered in one part reads as
   complete, verifies cleanly, and is wrong by omission.
+- **The right figures, the wrong conclusion.** "Is this business
+  capital-intensive?" answered *yes* from figures that argue *no*. Every figure
+  traces. The answer is the opposite of the truth.
+- **The right figures, the wrong period.** A quick ratio for "Q2 FY2023"
+  computed from the March balance sheet. Every digit is on the page.
 
 Neither is detectable by tracing digits, because both are about *meaning*. So a
 reader that did not write the answer is shown the question, the answer and the
 whole cited page — not the 2,200-character excerpt the writer saw — and asked
 whether the answer is right.
 
-Its verdict is a gate, not a judgement: `correct` serves the answer, anything
-else escalates to the deep path. That asymmetry is deliberate. A false
-`incorrect` costs a slow second search; a false `correct` puts a wrong figure in
-front of an analyst.
+Its verdict is a gate, not a judgement. On a fast answer, `correct` serves it
+and anything else escalates to the deep path. **On a deep answer there is no
+further tier, so anything but `correct` abstains** — which is the right trade:
+measured on the practice key, every deep answer this check rejects is a -1 that
+becomes a 0, and the rubric charges twice as much for the former.
+
+The asymmetry on the fast path is deliberate too. A false `incorrect` costs a
+slow second search; a false `correct` puts a wrong figure in front of an
+analyst.
 """
 
 from __future__ import annotations
@@ -27,7 +37,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Sequence
 
 from analyst_copilot.agent.corpus import DocumentCorpus
 from analyst_copilot.agent.prompts import VALIDATOR_SYSTEM, build_validator_prompt
@@ -101,6 +111,8 @@ class AnswerValidator:
         corpus: DocumentCorpus,
         page_label: str = "",
         evidence_snippet: str = "",
+        computation: str = "",
+        inputs: Sequence[object] = (),
     ) -> Validation:
         if page is None:
             return Validation(Verdict.UNCHECKED, "no page was cited")
@@ -132,6 +144,8 @@ class AnswerValidator:
                 page_text=view.text,
                 evidence_snippet=evidence_snippet,
                 max_chars=self._max_page_chars,
+                computation=computation,
+                inputs=inputs,
             ),
             registry=registry,
             terminal_tools=(REPORT_VALIDATION,),

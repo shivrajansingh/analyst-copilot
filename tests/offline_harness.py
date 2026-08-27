@@ -42,6 +42,8 @@ class StubValidator:
         corpus,
         page_label="",
         evidence_snippet="",
+        computation="",
+        inputs=(),
     ) -> Validation:
         self.calls.append((question, answer, page))
         return Validation(self.verdict, self.reason)

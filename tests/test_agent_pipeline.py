@@ -246,10 +246,26 @@ def _deep_answer(**overrides):
     return DeepResult(**base)
 
 
+class EscalateThenAccept:
+    """Doubts the fast answer, then accepts the deep one. Two different calls."""
+
+    def __init__(self):
+        self.calls = []
+
+    def check(self, question, answer, doc_name, page, corpus, page_label="",
+              evidence_snippet="", computation="", inputs=()):
+        self.calls.append({"answer": answer, "computation": computation, "inputs": list(inputs)})
+        first = len(self.calls) == 1
+        return Validation(
+            Verdict.INCORRECT if first else Verdict.CORRECT,
+            "escalate" if first else "checks out",
+        )
+
+
 def test_a_verified_deep_answer_is_served_with_its_citation(markdown):
     agent = build_agent(
         FakeQA(),
-        validator=StubValidator(Verdict.INCORRECT, "escalate"),
+        validator=EscalateThenAccept(),
         deep=StubDeepSearch(_deep_answer()),
         ready_documents=[DOC],
     )
@@ -275,9 +291,10 @@ def test_a_deep_answer_the_document_does_not_support_is_refused(markdown):
 
 
 def test_a_derived_deep_answer_verifies_through_its_inputs(markdown):
+    validator = EscalateThenAccept()
     agent = build_agent(
         FakeQA(),
-        validator=StubValidator(Verdict.INCORRECT, "escalate"),
+        validator=validator,
         deep=StubDeepSearch(
             _deep_answer(
                 answer="Capex fell 14.9% year on year.",
@@ -294,6 +311,30 @@ def test_a_derived_deep_answer_verifies_through_its_inputs(markdown):
     assert answer.found, "a computed figure appears on no page; its inputs do"
     assert answer.computation == "(1577 - 1373) / 1373 * 100"
     assert [item.value for item in answer.inputs] == ["1,577", "1,373"]
+    # The derivation reaches the validator, so it judges the reasoning instead
+    # of hunting for a figure that was never printed.
+    assert validator.calls[-1]["computation"] == "(1577 - 1373) / 1373 * 100"
+    assert len(validator.calls[-1]["inputs"]) == 2
+
+
+def test_a_deep_answer_the_validator_doubts_is_withheld(markdown):
+    """
+    There is no tier after the deep path, so a doubt abstains.
+
+    Measured on the practice key this is the right trade: every deep answer this
+    catches was a -1 (a conclusion contradicting its own figures, or the wrong
+    period's column), and it becomes a 0 instead.
+    """
+    agent = build_agent(
+        FakeQA(),
+        validator=StubValidator(Verdict.INCORRECT, "the figures argue the opposite"),
+        deep=StubDeepSearch(_deep_answer()),
+        ready_documents=[DOC],
+    )
+    answer = agent.answer("What was FY2022 capex?", doc_name=DOC)
+    assert not answer.found
+    assert answer.abstention_reason == "deep_rejected:incorrect"
+    assert "the figures argue the opposite" in answer.validation
 
 
 # --- decomposition --------------------------------------------------------- #

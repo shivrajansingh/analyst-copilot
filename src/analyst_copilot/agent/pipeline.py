@@ -428,17 +428,58 @@ class AnalystAgent:
             base.validation = verdict.reason
             return base
 
+        # The same meaning check the fast path gets. The deterministic verifier
+        # has proved the figures are on the page; it cannot tell whether they
+        # are the right figures for the question -- the wrong period's column,
+        # a conclusion that contradicts its own numbers, a list with an item too
+        # many. Measured on the practice key, those are what the deep path gets
+        # wrong, and there is no tier after this one, so a doubt abstains.
+        _emit(on_stage, StageEvent(Stage.VALIDATING, "checking the answer", **located))
+        validation = self._validate_deep(question, result, verdict, scope)
+        if not validation.serves:
+            logger.info(
+                "deep answer withheld for %r: %s", question[:60], validation.reason
+            )
+            base.abstention_reason = f"deep_rejected:{validation.verdict.value}"
+            base.validation = f"{validation.verdict.value}: {validation.reason}"
+            return base
+
         base.answer = result.answer
         base.found = True
         base.citation = _citation_from_deep(verdict, corpus)
         base.inputs = list(result.inputs)
         base.computation = result.computation
         base.validation = (
-            verdict.derivation.reason
-            if verdict.derivation and verdict.derivation.ok
-            else verdict.reason
+            validation.reason
+            or (
+                verdict.derivation.reason
+                if verdict.derivation and verdict.derivation.ok
+                else verdict.reason
+            )
         )
         return base
+
+    def _validate_deep(self, question: str, result, verdict, scope: Scope):
+        """
+        Check a deep answer's meaning against the page it was cited to.
+
+        The derivation is passed through when there is one, so the validator
+        knows a computed figure is *expected* to be absent from the page and
+        judges whether the inputs and the operation were the right ones instead
+        of hunting for a number that was never printed.
+        """
+        if not self._settings.agent_validate_answers or scope.corpus is None:
+            return _served("validation disabled")
+        return self._checker().check(
+            question=question,
+            answer=result.answer,
+            doc_name=verdict.doc_name,
+            page=verdict.page,
+            corpus=scope.corpus,
+            evidence_snippet=verdict.snippet,
+            computation=result.computation,
+            inputs=result.inputs,
+        )
 
     # -- scope -------------------------------------------------------------- #
     def _resolve_scope(self, collection: Optional[str], doc_name: Optional[str]) -> Scope:
@@ -641,11 +682,9 @@ def _served(reason: str) -> Validation:
     return Validation(Verdict.UNCHECKED, reason)
 
 
-def _emit(callback: Optional[StageCallback], event: StageEvent, **fields) -> None:
+def _emit(callback: Optional[StageCallback], event: StageEvent) -> None:
     if callback is None:
         return
-    for key, value in fields.items():
-        setattr(event, key, value)
     try:
         callback(event)
     except Exception:  # noqa: BLE001 - progress must never break an answer
