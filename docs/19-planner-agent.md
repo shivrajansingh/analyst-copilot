@@ -174,8 +174,6 @@ flowchart TD
     META --> DONE2
 ```
 
-```
-
 The planner sits where the router sits today, and answers a wider question. The
 four intent classes replace three; `documents` and `deep_path` are new.
 Everything below the planner is the pipeline that exists now.
