@@ -1,9 +1,9 @@
 # HTTP API
 
-A thin FastAPI shell over the existing pipeline. It imports
+A thin FastAPI shell over the pipeline. It imports `AnalystAgent`,
 `QuestionAnsweringService` and `HybridFilingIndexer` and adds **no** retrieval,
 prompting or verification logic of its own — every decision about an answer
-still happens in `analyst_copilot.services`.
+still happens in `analyst_copilot.agent` and `analyst_copilot.services`.
 
 ```bash
 python scripts/serve_api.py            # http://127.0.0.1:8000, docs at /docs
@@ -22,7 +22,7 @@ src/analyst_copilot/api/
 ├── filings.py       FilingService — upload rules, storage, indexed-state queries
 ├── dependencies.py  singletons wired through Depends (overridable in tests)
 ├── main.py          create_app() — middleware, routers, lifespan
-└── routers/         health.py, filings.py, chat.py
+└── routers/         health.py, filings.py, collections.py, conversations.py, chat.py
 ```
 
 Configuration is deliberately split. `analyst_copilot.config.settings` configures
@@ -42,6 +42,7 @@ All under `/api/v1`.
 | `GET` | `/filings/{doc_name}/status` | Processing status for one filing |
 | `GET` | `/jobs/{job_id}` | Processing status by job id |
 | `POST` | `/chat` | Ask one question of one filing |
+| `POST` | `/chat/stream` | The same answer, preceded by progress events (SSE) |
 
 ### Add a filing
 
@@ -90,6 +91,85 @@ broke".
 Questions are scoped to one filing on purpose — a citation is only checkable
 against the document it names.
 
+### Check `mode` before `found`
+
+`/chat` answers messages, not only questions, so the response says which tier
+produced it. See [Agent harness](16-agent-harness.md).
+
+| `mode` | Meaning | `evidence` |
+|---|---|---|
+| `conversational` | Not a question about a document — a greeting, or a question about the assistant | `null`, and `found` is `true` |
+| `fast` | Hybrid retrieval answered it and a second reader agreed | the cited page |
+| `deep` | The cheap tiers could not prove an answer, so every page was read | the cited page |
+
+A conversational reply is **neither an evidenced answer nor a decline**, which is
+why `mode` is checked first. `found` is `true` because the message was answered;
+there is simply nothing to cite. A client that branches on `found` alone will
+render a greeting as if the filing proved it.
+
+`"hi"` is a valid `question` — the request's minimum length is one character, not
+three, because a greeting is a message to answer rather than a malformed request.
+
+### Extra response fields
+
+| Field | Meaning |
+|---|---|
+| `intent` | `smalltalk`, `capability` or `document_question` |
+| `citations[]` | Every place the answer can be checked, one per answered part. `evidence` repeats the first. |
+| `parts[]` | Set only when the question was split into several questions, each with its own answer and citation |
+| `computation` | The arithmetic behind a derived figure, re-evaluated during verification |
+| `inputs[]` | The figures a derived answer was computed from, each with the page it was read from |
+| `validation` | What the checking step concluded, and why |
+| `pages_read` / `shards_run` | Pages read and reader agents used by the deep path. `0` when it did not run. |
+
+A derived answer is the case worth knowing about: an operating margin appears on
+no page, so `evidence` cites where the argument lives while `inputs` and
+`computation` are what actually prove it.
+
+### Ask a question, streaming progress
+
+Reading a whole filing takes about a minute, and a minute of silence reads as a
+hang. `POST /chat/stream` returns the same `ChatResponse`, preceded by the
+progress that produced it.
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/api/v1/chat/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"collection": "3M multi-year", "question": "What was FY2022 capex?"}'
+```
+
+```text
+event: stage
+data: {"stage":"routing","detail":"reading the message"}
+
+event: stage
+data: {"stage":"deep_search","detail":"reader 4: nothing here","done":4,"total":13}
+
+event: answer
+data: {"doc_name":"3M_2022_10K","found":true,"mode":"deep", ...}
+```
+
+| Event | Payload | Notes |
+|---|---|---|
+| `stage` | `{stage, detail, done?, total?, part?, part_total?}` | Zero or more, in order. `done`/`total` are set only while readers are fanning out. |
+| `answer` | The full `ChatResponse` | Exactly one, and always last |
+| `error` | `{code, message}` | Instead of `answer`. The HTTP status is still `200` — the stream had already begun. |
+
+**Progress is streamed; the answer is not.** Verification runs after the model
+replies, so streaming tokens would put an unproven figure on screen. The answer
+arrives in one piece, already verified.
+
+Three practical notes:
+
+- It is a **POST**, so read it with `fetch` and a stream reader. `EventSource`
+  cannot send a request body.
+- A `:` keepalive comment is emitted every 15 seconds, so a proxy that closes
+  idle connections does not kill a legitimate long answer.
+- The response sets `X-Accel-Buffering: no`. Without it nginx would buffer the
+  whole response and deliver every event at the end, which defeats the endpoint.
+- Closing the reader **cancels the work** rather than leaving a fan-out of
+  reader agents running for nobody.
+
 ## Errors
 
 Every failure has the same shape:
@@ -102,11 +182,12 @@ Every failure has the same shape:
 |---|---|---|
 | 400 | `invalid_filing_name` | Filename yields no usable name, or file is empty |
 | 404 | `filing_not_found` / `job_not_found` | Unknown filing or job |
-| 409 | `filing_not_indexed` | `/chat` before the filing is ready |
+| 409 | `filing_not_indexed` | A **document question** before the filing is ready. A greeting is still answered. |
 | 413 | `file_too_large` | Upload exceeds `API_MAX_UPLOAD_BYTES` |
-| 415 | `unsupported_file_type` | Not `.htm` / `.html` |
+| 415 | `unsupported_file_type` | Not a supported document format |
 | 422 | — | Request body failed validation (FastAPI default) |
 | 502 | `upstream_unavailable` | Chat or embedding provider unreachable |
+| 503 | `database_unavailable` | A conversations endpoint with no `DATABASE_URL` set |
 
 ## Configuration
 

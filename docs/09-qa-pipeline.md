@@ -1,5 +1,11 @@
 # Question answering
 
+> **This is tier 1.** It is what runs first and answers most questions, and it
+> is unchanged. What happens when it cannot produce an answer that survives
+> checking — a second reader over the whole cited page, then every page of the
+> filing read by parallel agents, then verification that can prove a *computed*
+> figure — is in [Agent harness](16-agent-harness.md).
+
 **Modules:** `analyst_copilot.llm`, `analyst_copilot.services.qa`
 
 Turns hybrid retrieval into a grounded answer: chat LLM extracts a value from retrieved pages, then a verifier accepts it or the system abstains with **“not found in this filing.”**

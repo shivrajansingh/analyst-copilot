@@ -33,6 +33,7 @@ from analyst_copilot.api.dependencies import (
     get_filing_service,
 )
 from analyst_copilot.api.errors import (
+    ApiError,
     DatabaseUnavailable,
     FilingNotIndexed,
     UpstreamUnavailable,
@@ -78,11 +79,9 @@ async def chat(
     per question asked — a citation is only checkable against the document it
     names.
     """
-    answer, response = await _answer(
+    return await _answer(
         request, filings, collections, agent, conversations, user_id, on_stage=None
     )
-    del answer
-    return response
 
 
 @router.post(
@@ -125,11 +124,14 @@ async def chat_stream(
 
     async def produce() -> None:
         try:
-            _, response = await _answer(
+            response = await _answer(
                 request, filings, collections, agent, conversations, user_id, on_stage
             )
             await queue.put(("answer", response.model_dump(mode="json")))
-        except (FilingNotIndexed, UpstreamUnavailable) as exc:
+        except ApiError as exc:
+            # Any handled failure -- not indexed, provider down, someone else's
+            # conversation -- reaches the reader as an `error` event. The HTTP
+            # status is already 200: the stream had begun before this was known.
             await queue.put(("error", {"code": exc.code, "message": exc.message}))
         except Exception as exc:  # noqa: BLE001 - the stream must report, not hang
             logger.exception("streaming chat failed")
@@ -183,7 +185,7 @@ async def _answer(
     conversations: ConversationService,
     user_id: str,
     on_stage,
-):
+) -> ChatResponse:
     """Answer, then record the exchange. Used by both endpoints."""
     ready = await run_in_threadpool(_scope_is_ready, request, filings, collections)
     history = await _history(conversations, user_id, request.conversation_id)
@@ -241,7 +243,7 @@ async def _answer(
                 request.conversation_id,
             )
 
-    return answer, response
+    return response
 
 
 def _scope_is_ready(

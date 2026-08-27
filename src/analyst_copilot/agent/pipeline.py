@@ -344,8 +344,12 @@ class AnalystAgent:
         on_stage: Optional[StageCallback],
         located: dict,
     ):
-        if not self._settings.agent_validate_answers or scope.corpus is None:
+        if not self._settings.agent_validate_answers:
             return _served("validation disabled")
+        if scope.corpus is None:
+            # Nothing parsed to check against. The fast answer already passed the
+            # deterministic evidence check, so it is served rather than lost.
+            return _served("no parsed pages to check the answer against")
 
         _emit(on_stage, StageEvent(Stage.VALIDATING, "checking the answer", **located))
         return self._checker().check(
