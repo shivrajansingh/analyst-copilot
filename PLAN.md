@@ -87,6 +87,46 @@ PYTHONPATH=src python scripts/eval/score.py --results data/eval-after-fix.json -
 
 ## Remaining (required for the product)
 
+### 0. The harness has to earn its abstentions back
+
+**Measured, first 10 practice questions, same code and same corpus:**
+
+| | Fast path alone | Harness (first cut) |
+|---|---:|---:|
+| Rubric score | **+2** | **−1** |
+| +1 correct answer and location | 3 | 3 |
+| 0 correct answer, wrong page | 2 | 2 |
+| 0 abstained | 4 | 1 |
+| **−1 confidently wrong** | **1** | **4** |
+
+The harness found more and abstained less, and the rubric charged twice as much
+for what came with it. This is exactly the warning already recorded in
+[docs/07](docs/07-hybrid-retrieval.md): *"a change that raised recall@5 from
+4/10 to 7/10 lowered the rubric score, because better retrieval also converts
+abstentions into confident wrong answers."*
+
+**None of the four was a fabrication.** Every figure in every one traces to its
+cited page, which is why the deterministic verifier passed them all:
+
+| Question | What happened |
+|---|---|
+| "Is 3M capital-intensive?" | Answered *yes* from figures arguing *no* |
+| Quick ratio "for Q2 FY2023" | Computed from the **March** balance sheet |
+| "Which debt securities are registered?" | A count of *four*, one of which had matured |
+| "What drove operating margin change?" | 0.3pp against a gold of 1.7% |
+
+Two came out of the deep path, which was a gap: only fast answers faced the
+second reader. Fixed — the deep path now faces the same check, and since there
+is no tier after it, anything but `correct` abstains. The validator prompt now
+leads with direction, period and the form asked for rather than with "is the
+figure on the page".
+
+**Re-measure before trusting any of this.** The open question is whether the
+check is strict enough to convert those −1s to 0s *without* also rejecting the
+answers the deep path gets right — the Activision fixed-asset-turnover question
+(gold 24.26, answered 24.26 from three traced inputs) is the one to watch, since
+a validator that hunts for a computed figure on the page would reject it.
+
 ### 1. Re-baseline the harness on all 136 questions
 
 **What:** the standing number is **+7 over all 136 questions** (29 correct with

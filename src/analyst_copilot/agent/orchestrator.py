@@ -249,7 +249,17 @@ class DeepSearchOrchestrator:
             candidates,
             key=lambda item: (not item.partial, item.confidence),
             reverse=True,
-        )[:MAX_CANDIDATES]
+        )
+        if len(ranked) > MAX_CANDIDATES:
+            # Said out loud: a truncated candidate list is a bounded search, and
+            # reporting complete coverage of a document that was only partly
+            # adjudicated is how a silent cap becomes a wrong citation.
+            logger.warning(
+                "adjudicating the %d strongest of %d candidates",
+                MAX_CANDIDATES,
+                len(ranked),
+            )
+            ranked = ranked[:MAX_CANDIDATES]
 
         toolset = DocumentToolset(corpus, scope_label="the whole filing")
         registry = ToolRegistry(
