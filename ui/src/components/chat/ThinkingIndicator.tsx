@@ -18,13 +18,14 @@ import { cn } from '@/lib/cn'
  * animation of the same stages, so the component works either way.
  */
 const FALLBACK: { stage: StageEvent['stage']; detail: string; at: number }[] = [
-  { stage: 'retrieving', detail: 'searching the filing', at: 0 },
+  { stage: 'planning', detail: 'working out what this needs', at: 0 },
+  { stage: 'retrieving', detail: 'searching the filing', at: 700 },
   { stage: 'reading', detail: 'reading the excerpts', at: 1800 },
   { stage: 'validating', detail: 'checking the answer', at: 5200 },
 ]
 
 const LABELS: Record<StageEvent['stage'], string> = {
-  routing: 'Reading your message',
+  planning: 'Working out what this needs',
   decomposing: 'Separating the questions',
   retrieving: 'Searching the filing',
   reading: 'Reading the excerpts',

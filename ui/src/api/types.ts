@@ -159,7 +159,7 @@ export interface CancelledEvent {
 /** A progress milestone from POST /chat/stream. */
 export interface StageEvent {
   stage:
-    | 'routing'
+    | 'planning'
     | 'decomposing'
     | 'retrieving'
     | 'reading'

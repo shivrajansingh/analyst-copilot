@@ -105,6 +105,28 @@ class Settings(BaseSettings):
     # Prior turns shown to the harness, so "and the year before?" resolves.
     agent_history_turns: int = 6
 
+    # Planner. One decision before any work happens: is this a greeting, a
+    # question about the document set, or a question that needs the documents
+    # read -- and if so, which documents could hold the answer. It replaces a
+    # router that decided the same thing from 125 hardcoded words and got it
+    # wrong on phrasings nobody had thought of.
+    planner_enabled: bool = True
+    # Narrow the deep search to the documents the planner chose. Off means every
+    # document is read on every escalated question, which is what happened before
+    # the planner existed: correct, and three times the work on a three-year set.
+    planner_scope_documents: bool = True
+    # The careful policy. Narrow only when the question names a fiscal year, so
+    # the scope can be checked against the document cards instead of trusted.
+    # Off is bolder: the planner may narrow on its own judgement.
+    planner_scope_requires_year: bool = True
+    # Below this the planner's document choice is discarded and everything is
+    # searched. Narrowing is the only decision here that can lose an answer.
+    planner_min_confidence: float = 0.8
+    # Re-run a scoped deep search over the documents it skipped, when the scoped
+    # search found nothing. This is what makes a wrong scope cost time instead of
+    # the answer, and turning it off removes the safety net entirely.
+    planner_widen_on_empty: bool = True
+
     # How far a citation may be moved to land on the page that actually carries
     # the evidence. Two readings of the same document -- filed HTML vs the
     # filer's own PDF -- disagree by one or two pages on 15 of the 62 documents

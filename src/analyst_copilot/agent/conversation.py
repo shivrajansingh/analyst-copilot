@@ -14,6 +14,7 @@ the product exists to prevent.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 from analyst_copilot.agent.prompts import (
@@ -23,6 +24,22 @@ from analyst_copilot.agent.prompts import (
 from analyst_copilot.llm.base import ChatClient
 
 logger = logging.getLogger(__name__)
+
+# The escape hatch. A planner that classifies a real question as small talk would
+# otherwise answer it from nothing, and that is the one planner mistake that
+# cannot be recovered from -- so the reply itself is given a way to say "this is
+# not mine to answer" and hand the message back to be searched properly.
+NEEDS_DOCUMENT = "NEEDS_DOCUMENT"
+
+
+@dataclass
+class ConversationReply:
+    """A reply, or a request to search the documents after all."""
+
+    text: str = ""
+    #: True when answering would require reading a filing.
+    needs_document: bool = False
+
 
 # Used when the model cannot be reached. Still useful, still honest, and still
 # tells the user what to do next.
@@ -47,9 +64,17 @@ class ConversationResponder:
         collection: Optional[str] = None,
         documents: Sequence[str] = (),
         history: str = "",
-    ) -> str:
+        facts: str = "",
+    ) -> ConversationReply:
+        """
+        Answer a message that does not need a document read.
+
+        `facts` carries pre-computed statements about the filing set for a
+        question about the set itself. The prompt forbids calculating from them,
+        because there is no verifier on this path and nothing to verify against.
+        """
         if self._chat is None:
-            return FALLBACK_REPLY
+            return ConversationReply(text=FALLBACK_REPLY)
         try:
             text = self._chat.complete(
                 messages=[
@@ -73,5 +98,10 @@ class ConversationResponder:
             )
         except Exception as exc:  # noqa: BLE001 - never fail a hello
             logger.warning("conversational reply failed: %s", exc)
-            return FALLBACK_REPLY
-        return text.strip() or FALLBACK_REPLY
+            return ConversationReply(text=FALLBACK_REPLY)
+
+        cleaned = text.strip()
+        if NEEDS_DOCUMENT in cleaned.upper():
+            # The planner sent this here and it does not belong. Hand it back.
+            return ConversationReply(needs_document=True)
+        return ConversationReply(text=cleaned or FALLBACK_REPLY)

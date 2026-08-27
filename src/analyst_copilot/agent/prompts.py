@@ -476,7 +476,21 @@ you would need to look up and invite the question.
 
 Never claim to have read something you have not. Do not invent document names —
 you are told which documents are loaded, and if none are, say so and suggest
-adding one."""
+adding one.
+
+**When facts about the filing set are given to you**, they are already counted and
+checked. Quote them. Do not add up page counts, do not count documents yourself,
+do not work out which years are covered — every one of those is supplied. There is
+no verifier on this path, so a number you compute here is a number nobody checks.
+
+**If answering this message would need a filing read**, reply with exactly:
+
+NEEDS_DOCUMENT
+
+and nothing else. Do not apologise, do not explain, do not guess at the answer.
+The message will be researched properly instead. Use this whenever the message
+turns out to be a real question about what a document says — it costs the analyst
+a second and it is always better than an answer from nothing."""
 
 
 def build_conversation_prompt(
@@ -484,6 +498,7 @@ def build_conversation_prompt(
     collection: Optional[str],
     documents: Sequence[str],
     history: str = "",
+    facts: str = "",
 ) -> str:
     if documents:
         listing = "\n".join(f"  - {name}" for name in documents[:20])
@@ -500,7 +515,14 @@ def build_conversation_prompt(
             "Filings screen if the user needs an answer from a filing."
         )
     prior = f"\n\nEarlier in this conversation:\n{history}" if history else ""
-    return f"{loaded}{prior}\n\nUser's message:\n{message}"
+    known = (
+        "\n\nFacts about the filing set. These are already counted and checked — "
+        "quote them, and do not calculate anything of your own from them:\n"
+        f"{facts}"
+        if facts
+        else ""
+    )
+    return f"{loaded}{known}{prior}\n\nUser's message:\n{message}"
 
 
 def format_history(turns: Sequence[dict], limit: int = 6, max_chars: int = 400) -> str:
