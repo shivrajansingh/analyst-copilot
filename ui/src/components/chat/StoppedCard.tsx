@@ -15,7 +15,7 @@ import { ThinkingTrail } from './ThinkingTrail'
  * colouring that as an error teaches them to read their own decision as a bug.
  */
 const STAGE_LABELS: Record<StageEvent['stage'], string> = {
-  routing: 'Reading your message',
+  planning: 'Working out what this needs',
   decomposing: 'Separating the questions',
   retrieving: 'Searching the filing',
   reading: 'Reading the excerpts',
