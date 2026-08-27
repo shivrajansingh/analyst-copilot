@@ -20,6 +20,7 @@ Guides for work that is **already implemented**. For remaining work and how to f
 | [What changed in this round](17-enhancements.md) | **Start here**: the enhancements, what each fixed, what it measured |
 | [Agent harness](16-agent-harness.md) | **Routing, validation and whole-document deep search** |
 | [Multi-agent retrieval](12-multi-agent-retrieval.md) | The assessment that led to the harness |
+| [Planner agent](19-planner-agent.md) | **Proposal, not built**: deciding what work a question needs |
 | [Docker](15-docker.md) | **Running the stack**: api + ui containers, compose, nginx |
 | [Stopping a run](19-stopping-a-run.md) | **The stop button**: what it takes to stop work in a worker thread |
 | [Design system](18-design-system.md) | Colour tokens, accent themes, why colour means something |
