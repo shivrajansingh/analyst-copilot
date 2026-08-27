@@ -1,6 +1,6 @@
 # The production stack: three services and one one-shot migration, one network.
 #
-#   browser ──:3000──▶ ui (nginx) ──/api/*──▶ api (uvicorn) ──▶ storage/ filings/
+#   browser ──:4006──▶ ui (nginx) ──/api/*──▶ api (uvicorn) ──▶ storage/ filings/
 #                                                  │
 #                                                  ▼
 #                              migrate (alembic) ◀── db (postgres) ──▶ pgdata
@@ -84,10 +84,6 @@ services:
       # http://host.docker.internal:11434/v1, say. Harmless when both providers
       # are remote, which is the default configuration.
       - "host.docker.internal:host-gateway"
-    ports:
-      # Exposed for curl and /docs. The UI does not use it; it goes over the
-      # compose network. Drop this line to keep the API off the host entirely.
-      - "127.0.0.1:8000:8000"
     restart: unless-stopped
 
   ui:
@@ -101,7 +97,7 @@ services:
         # resolve gives a 502 that only a restart clears.
         condition: service_healthy
     ports:
-      - "3000:80"
+      - "4006:80"
     restart: unless-stopped
 
 volumes:

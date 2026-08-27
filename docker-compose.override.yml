@@ -22,12 +22,13 @@ services:
       uvicorn analyst_copilot.api.main:app
       --host 0.0.0.0 --port 8000
       --reload --reload-dir /app/src
-    ports:
-      - "8000:8000"
 
   ui:
     # The production image is nginx serving a build; for development it has to
-    # be node, so the image is replaced rather than overridden.
+    # be node, so the image is replaced rather than overridden. `!reset` drops
+    # the base file's `build:`, which would otherwise tag the nginx runtime
+    # image as node:22-alpine and clobber the official image locally.
+    build: !reset null
     image: node:22-alpine
     working_dir: /app
     depends_on:
@@ -43,7 +44,6 @@ services:
       # is not shadowed by the host's, which on macOS holds darwin binaries.
       - /app/node_modules
     # `npm ci` on every start is a few seconds and keeps the container's
-    # dependencies honest against the lockfile.
-    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
-    ports:
-      - "5173:5173"
+    # dependencies honest against the lockfile. The dev server listens on the
+    # same container port (80) the base file publishes as host 4006.
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 80"
