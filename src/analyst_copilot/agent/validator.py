@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Sequence
 
+from analyst_copilot.agent.cancellation import CancelToken, token_or_never
 from analyst_copilot.agent.corpus import DocumentCorpus
 from analyst_copilot.agent.prompts import VALIDATOR_SYSTEM, build_validator_prompt
 from analyst_copilot.agent.runtime import AgentRuntime
@@ -115,7 +116,10 @@ class AnswerValidator:
         computation: str = "",
         inputs: Sequence[object] = (),
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> Validation:
+        stop = token_or_never(cancel)
+        stop.raise_if_cancelled()
         if page is None:
             return Validation(Verdict.UNCHECKED, "no page was cited")
 
@@ -152,6 +156,7 @@ class AnswerValidator:
             registry=registry,
             terminal_tools=(REPORT_VALIDATION,),
             on_trace=tracing.scoped(on_trace, "checker"),
+            cancel=stop,
         )
 
         if run.error:

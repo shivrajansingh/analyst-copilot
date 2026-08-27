@@ -12,6 +12,7 @@ import { ChatBubble } from '@/components/chat/ChatBubble'
 import { Composer } from '@/components/chat/Composer'
 import { DeclineCard } from '@/components/chat/DeclineCard'
 import { FilingPicker } from '@/components/chat/FilingPicker'
+import { StoppedCard } from '@/components/chat/StoppedCard'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
 import { EvidencePanel } from '@/components/evidence/EvidencePanel'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -27,6 +28,30 @@ import { truncateTitle } from '@/lib/format'
  */
 const MAX_TRACES = 400
 
+/**
+ * How long a stop waits for the server to say where it stopped.
+ *
+ * The `cancelled` event is the better ending — it carries the stage and the
+ * reader counts — so the connection is held open just long enough for it to
+ * arrive. After that the client hangs up, which stops the work regardless.
+ */
+const STOP_GRACE_MS = 1200
+
+/**
+ * The question a stopped turn was answering.
+ *
+ * Read back from the thread rather than stored on the marker: the user message
+ * immediately before it is the question, and duplicating it would be a second
+ * copy that can disagree with the first.
+ */
+function questionBefore(messages: { id: string; role: string; content: string }[], id: string) {
+  const index = messages.findIndex((message) => message.id === id)
+  for (let cursor = index - 1; cursor >= 0; cursor--) {
+    if (messages[cursor].role === 'user') return messages[cursor].content
+  }
+  return ''
+}
+
 export function ChatPage() {
   const { conversationId } = useParams()
   const [searchParams] = useSearchParams()
@@ -38,6 +63,12 @@ export function ChatPage() {
 
   const [draftFiling, setDraftFiling] = useState<string | null>(searchParams.get('filing'))
   const [busy, setBusy] = useState(false)
+  // The stop was asked for and the server is still unwinding the calls already
+  // in flight. A second or so, and worth naming rather than pretending.
+  const [stopping, setStopping] = useState(false)
+  // A question put back in the composer by "Ask again". Most stops are followed
+  // by a reworded version of the same question, not a repeat of it.
+  const [draft, setDraft] = useState<string | null>(null)
   // The live stage from the streaming endpoint. Reading a whole filing takes a
   // minute, and a minute of silence reads as a hang.
   const [stage, setStage] = useState<StageEvent | null>(null)
@@ -54,6 +85,10 @@ export function ChatPage() {
   const setEvidenceOpen = useUiStore((state) => state.setEvidenceOpen)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  // The run in flight, and how to stop it. A ref rather than state: stopping is
+  // an imperative act on a live connection, and nothing renders from it.
+  const abortRef = useRef<AbortController | null>(null)
+  const runIdRef = useRef<string | null>(null)
   // A conversation is pinned to the filing it was started in, so every
   // citation in the thread stays checkable against the same set of documents.
   const filingName = conversation?.collection ?? draftFiling
@@ -81,6 +116,10 @@ export function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages.length, busy])
+
+  // Leaving the page is a stop. Without this the reader goes away and the
+  // fan-out carries on reading a 10-K for nobody.
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   const ask = async (question: string) => {
     if (!filingName) return
@@ -114,18 +153,62 @@ export function ChatPage() {
     }
 
     setBusy(true)
+    setStopping(false)
     setStage(null)
     setTraces([])
     const collected: TraceEvent[] = []
+    // A holder, not a plain `let`: the assignment happens inside a callback, and
+    // TypeScript's flow analysis would otherwise narrow the read back to null.
+    const latest: { stage: StageEvent | null } = { stage: null }
+    const controller = new AbortController()
+    abortRef.current = controller
+    runIdRef.current = null
     try {
-      const result = await chatApi.streamFiling(filingName, question, {
+      const outcome = await chatApi.streamFiling(filingName, question, {
         conversationId: target?.id,
-        onStage: setStage,
+        signal: controller.signal,
+        onRun: (run) => {
+          runIdRef.current = run.run_id
+        },
+        onStage: (event) => {
+          latest.stage = event
+          setStage(event)
+        },
         onTrace: (trace) => {
           collected.push(trace)
           setTraces(collected.slice(-MAX_TRACES))
         },
       })
+
+      if (outcome.status === 'cancelled') {
+        // A stop is not an error and must not land in the red card. The
+        // question stays in the thread — it was asked — and the assistant turn
+        // becomes a marker of how far the work got before it was stopped.
+        // Nothing is persisted: the server records no cancelled exchange.
+        const at = outcome.at.stage
+          ? outcome.at
+          : // The client hung up rather than waiting to be told where it
+            // stopped, so fall back to the last milestone it rendered.
+            {
+              ...outcome.at,
+              stage: latest.stage?.stage ?? null,
+              done: latest.stage?.done,
+              total: latest.stage?.total,
+            }
+        if (target) {
+          store.appendLocal(target.id, {
+            id: `m_${Date.now()}_s`,
+            role: 'assistant',
+            content: '',
+            created_at: new Date().toISOString(),
+            stopped: at,
+            traces: collected.slice(-MAX_TRACES),
+          })
+        }
+        return
+      }
+
+      const result = outcome.answer
       const answerId = `m_${Date.now()}_a`
       setRevealId(answerId)
       if (target) {
@@ -159,10 +242,42 @@ export function ChatPage() {
         setThreadError(message)
       }
     } finally {
+      abortRef.current = null
+      runIdRef.current = null
       setBusy(false)
+      setStopping(false)
       setStage(null)
       setTraces([])
     }
+  }
+
+  /**
+   * Stop the run in flight — all of it, not just the waiting.
+   *
+   * Two signals, on purpose. The abort is instant and needs no round trip; the
+   * cancel call is the guarantee, because how quickly the server notices a
+   * hang-up depends on proxy buffering we do not control. Both set the same
+   * token, and setting it twice is free.
+   *
+   * The endpoint goes first: it is a live connection that will exist for another
+   * millisecond, and aborting before asking would throw the request away.
+   */
+  const stop = () => {
+    if (!busy || stopping) return
+    setStopping(true)
+    const runId = runIdRef.current
+    const controller = abortRef.current
+    if (!runId) {
+      // Stopped before the run was even named. Nothing to call, so hang up.
+      controller?.abort()
+      return
+    }
+    void chatApi.cancelRun(runId)
+    // Give the server the moment it needs to answer with `cancelled` and say
+    // where it stopped. If it does not, the abort ends the wait anyway. The
+    // controller is captured, not read later: by then it may belong to the next
+    // question, and this stop has no business ending that one.
+    window.setTimeout(() => controller?.abort(), STOP_GRACE_MS)
   }
 
   const openEvidence = (result: ChatResponse) => {
@@ -233,6 +348,13 @@ export function ChatPage() {
                     <p className="mt-0.5 text-xs text-ink-muted">{message.error}</p>
                   </div>
                 </div>
+              ) : message.stopped ? (
+                <StoppedCard
+                  key={message.id}
+                  at={message.stopped}
+                  traces={message.traces}
+                  onAskAgain={() => setDraft(questionBefore(messages, message.id))}
+                />
               ) : message.result?.mode === 'conversational' ? (
                 <ChatBubble key={message.id} text={message.content} />
               ) : message.result?.found ? (
@@ -268,8 +390,12 @@ export function ChatPage() {
             )}
             <Composer
               onSubmit={ask}
+              onStop={stop}
               disabled={!filingName}
               busy={busy}
+              stopping={stopping}
+              draft={draft}
+              onDraftUsed={() => setDraft(null)}
               docName={filingName ?? undefined}
               showSuggestions={messages.length === 0}
             />
