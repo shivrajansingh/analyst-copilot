@@ -12,7 +12,7 @@
  * That leaves the blues, the teals and the neutrals — which is also, not by
  * coincidence, what professional financial tooling actually uses.
  */
-export type AccentId = 'navy' | 'teal' | 'slate' | 'graphite' | 'indigo'
+export type AccentId = 'slate' | 'navy' | 'teal' | 'graphite' | 'indigo'
 
 export interface Accent {
   id: AccentId
@@ -22,19 +22,19 @@ export interface Accent {
 
 export const ACCENTS: Accent[] = [
   {
+    id: 'slate',
+    label: 'Slate',
+    description: 'Muted blue-grey. Restrained and unshowy — the default.',
+  },
+  {
     id: 'navy',
     label: 'Navy',
-    description: 'Steel blue. Conservative and institutional — the default.',
+    description: 'Steel blue. More saturated and more institutional.',
   },
   {
     id: 'teal',
     label: 'Teal',
     description: 'Deep cyan. Technical rather than corporate.',
-  },
-  {
-    id: 'slate',
-    label: 'Slate',
-    description: 'Muted blue-grey. Quieter than navy, still clearly blue.',
   },
   {
     id: 'graphite',
@@ -48,7 +48,7 @@ export const ACCENTS: Accent[] = [
   },
 ]
 
-export const DEFAULT_ACCENT: AccentId = 'navy'
+export const DEFAULT_ACCENT: AccentId = 'slate'
 
 /** Whether a stored value is still an accent this build offers. */
 export function isAccent(value: unknown): value is AccentId {

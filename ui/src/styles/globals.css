@@ -17,9 +17,13 @@
     --ink: 222 30% 12%;
     --ink-muted: 222 12% 40%;
     --ink-subtle: 222 10% 55%;
-    /* Overridden per accent theme below; navy is the default. */
-    --accent: 218 82% 42%;
-    --accent-soft: 214 95% 95%;
+    /*
+     * The default accent, repeated from the `slate` theme below. This is what
+     * paints if the document is styled before the stored accent reaches
+     * `data-accent`, so it has to agree with DEFAULT_ACCENT in lib/accents.ts.
+     */
+    --accent: 215 28% 40%;
+    --accent-soft: 215 32% 94%;
     --accent-ink: 0 0% 100%;
     --verified: 158 68% 32%;
     --verified-soft: 158 60% 95%;
@@ -42,9 +46,9 @@
     --ink: 220 24% 96%;
     --ink-muted: 220 12% 68%;
     --ink-subtle: 220 10% 52%;
-    --accent: 211 92% 66%;
-    --accent-soft: 214 60% 20%;
-    --accent-ink: 222 45% 9%;
+    --accent: 213 32% 72%;
+    --accent-soft: 215 25% 22%;
+    --accent-ink: 220 35% 12%;
     --verified: 158 64% 52%;
     --verified-soft: 158 50% 14%;
     --declined: 38 92% 62%;
