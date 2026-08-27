@@ -176,6 +176,71 @@ to paraphrase it wrongly.
 If synthesis fails, the strongest single candidate is used rather than
 discarding a whole fan-out — the verifier still gates it.
 
+### Partial findings: when no single reader can answer
+
+Non-overlapping slices buy independence and cost something real. A question
+needing two statements gets a complete answer from nobody, because the
+statements are pages apart and therefore in different readers' slices.
+
+Verified against the practice key on a question the deep path read all 126 pages
+for and returned nothing:
+
+```text
+Q     FY2017-FY2019 3 year average of capex as a % of revenue
+gold  1.9%, evidence pages 69 and 72
+
+Capital expenditures    116    131    155     page_index 72   -> shard 8
+Total net revenues    6,489  7,500  7,017     page_index 69   -> shard 7
+```
+
+Every figure was present and correctly parsed. Neither reader could answer, both
+said so, and the pipeline discarded everything each had read — a finding only
+became a candidate when `found` was true, so synthesis never ran and the answer
+was structurally unreachable however much of the document had been read. The
+sibling question (FY2019 fixed asset turnover) survived only by luck: revenue on
+page 69 and PP&E on page 68 happen to fall in the same shard.
+
+So a reader that cannot answer hands over what it *did* read:
+
+```text
+found: false, partial: true, inputs: [{label, value, page}, ...]
+```
+
+Those reach synthesis, which combines them. Measured after the change — six
+readers reported partials, none reported a complete answer:
+
+```text
+shard  3  revenue 6,489 / 7,500 / 7,017      page 29  (selected data)
+shard  4  revenue 6,489 / 7,500              page 36  (MD&A)
+shard  5  revenue 6,489 / 7,500              pages 40, 42
+shard  7  revenue 6,489 / 7,500 / 7,017      page 69  (statement of operations)
+shard  8  capex     116 /   131 /   155      page 72  (statement of cash flows)
+shard 11  revenue 6,489 / 7,500 / 7,017      page 101 (segment note)
+
+-> 1.9%   (116/6489 + 131/7500 + 155/7017) / 3 * 100
+   cited page 72, verified DERIVED, all six inputs traced
+```
+
+Note what synthesis had to do beyond arithmetic: revenue was offered from **five
+different pages**. It took the consolidated statement of operations and the
+consolidated statement of cash flows and cited the latter — which is the
+[authority policy](#the-authority-policy) working on exactly the duplicate-figure
+problem that motivated it.
+
+Three guards, because a fragment is not an answer:
+
+- a partial claiming to hold part of it *without* figures is not a contribution;
+- a partial needs no page of its own — its figures carry theirs;
+- if synthesis is unavailable, the fallback takes the strongest **complete**
+  finding and abstains when there is none. Promoting a fragment to a whole
+  answer is exactly the −1 this pipeline exists to avoid.
+
+Synthesis is also told it may read any page itself. Two partials and a missing
+third figure is a page to go and read, not a reason to abstain.
+
+**Cost:** this run took 288s — 13 readers, then synthesis reading pages to
+complete the picture. That is the slow end of the deep path.
+
 ### Deep search needs no embeddings
 
 Readers read the Markdown store, not the vector index. So the deep path works on

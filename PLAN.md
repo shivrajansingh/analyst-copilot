@@ -137,6 +137,15 @@ those answers are wrong. The three that remain:
 | Quick ratio "for Q2 FY2023" | Served `found: true` with the text *"the provided excerpts do not report a quick ratio for Q2 FY2023"* — a non-answer that no check rejected |
 | "Which debt securities are registered?" | Still a count of four rather than the three items, so the `form asked for` rule did not fire |
 
+**Separately measured and now fixed:** a question whose figures span two shards
+was unanswerable by construction. The FY2017-FY2019 average-capex-as-%-of-revenue
+question read all 126 pages and returned nothing, because capex (page 72) and
+revenue (page 69) sit in different readers' slices and a reader that could not
+answer had everything it read thrown away. Readers now hand over partial
+findings; the question returns **1.9%** against a gold of 1.9%, cited to a gold
+page, verified through six traced inputs. See
+[docs/16](docs/16-agent-harness.md#partial-findings-when-no-single-reader-can-answer).
+
 **The next move is abstention, not recall.** Two of the three are answers the
 system should have declined, and the second is the clearest: an answer whose own
 text says the evidence is absent must never be served as found. That is a
