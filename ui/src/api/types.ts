@@ -125,6 +125,18 @@ export interface StageUsage {
   estimated: boolean
 }
 
+/** Everything one model spent, across every stage that used it. */
+export interface ModelUsage {
+  model: string
+  calls: number
+  input_tokens: number
+  output_tokens: number
+  cached_input_tokens: number
+  total_tokens: number
+  /** Null when this model has no configured price. */
+  cost_usd: number | null
+}
+
 /**
  * What an answer cost.
  *
@@ -153,6 +165,14 @@ export interface Usage {
   models: string[]
   /** The breakdown, in the order the run happened. */
   stages: StageUsage[]
+  /**
+   * The same spend split by model rather than by stage.
+   *
+   * Aggregated from the calls themselves, so it is a fact rather than an
+   * inference off the stage rows — and it is the split that can be checked
+   * against a provider's invoice.
+   */
+  by_model: ModelUsage[]
 }
 
 /**

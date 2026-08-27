@@ -75,6 +75,40 @@ class StageUsage:
 
 
 @dataclass
+class ModelUsage:
+    """Everything one model spent, across every stage that used it.
+
+    Aggregated from the calls themselves rather than derived from the stage
+    breakdown. A stage happens to use one model today, but reading a model off
+    a stage is an inference, and this is the number an analyst checks against a
+    provider's bill.
+    """
+
+    model: str
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    micro_usd: int = 0
+    priced: bool = True
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "model": self.model,
+            "calls": self.calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "total_tokens": self.total_tokens,
+            "cost_usd": round(self.micro_usd / MICRO, 6) if self.priced else None,
+        }
+
+
+@dataclass
 class UsageReport:
     """What one answer cost, in total and by stage."""
 
@@ -89,6 +123,10 @@ class UsageReport:
     estimated: bool = False
     models: List[str] = field(default_factory=list)
     stages: List[StageUsage] = field(default_factory=list)
+    #: The same spend split by model rather than by stage. A run uses a chat
+    #: model and an embedding model at a hundredth of the price, and only this
+    #: split can be checked against a provider's invoice.
+    by_model: List[ModelUsage] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:
@@ -110,4 +148,5 @@ class UsageReport:
             "estimated": self.estimated,
             "models": list(self.models),
             "stages": [stage.to_dict() for stage in self.stages],
+            "by_model": [entry.to_dict() for entry in self.by_model],
         }

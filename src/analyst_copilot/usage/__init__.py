@@ -22,7 +22,7 @@ from analyst_copilot.usage.meter import (
     record_as,
     stage,
 )
-from analyst_copilot.usage.models import MICRO, StageUsage, Usage, UsageReport
+from analyst_copilot.usage.models import MICRO, ModelUsage, StageUsage, Usage, UsageReport
 from analyst_copilot.usage.pricing import (
     Price,
     PriceBook,
@@ -34,6 +34,7 @@ from analyst_copilot.usage.pricing import from_settings as prices_from_settings
 
 __all__ = [
     "MICRO",
+    "ModelUsage",
     "Price",
     "PriceBook",
     "Schedule",

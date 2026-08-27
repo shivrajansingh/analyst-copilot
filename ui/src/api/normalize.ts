@@ -52,6 +52,7 @@ function normalizeUsage(raw: Usage | null | undefined): Usage | null {
     ...raw,
     cached_input_tokens: raw.cached_input_tokens ?? 0,
     models: raw.models ?? [],
+    by_model: raw.by_model ?? [],
     stages: (raw.stages ?? []).map((stage) => ({
       ...stage,
       cached_input_tokens: stage.cached_input_tokens ?? 0,

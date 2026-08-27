@@ -369,6 +369,18 @@ class StageUsageResponse(BaseModel):
     )
 
 
+class ModelUsageResponse(BaseModel):
+    """Everything one model spent, across every stage that used it."""
+
+    model: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0
+    total_tokens: int
+    cost_usd: Optional[float] = None
+
+
 class UsageResponse(BaseModel):
     """
     What this answer cost: tokens spent, and the price of them where one is known.
@@ -397,6 +409,14 @@ class UsageResponse(BaseModel):
     )
     stages: List[StageUsageResponse] = Field(
         default_factory=list, description="The breakdown, in the order the run happened."
+    )
+    by_model: List[ModelUsageResponse] = Field(
+        default_factory=list,
+        description=(
+            "The same spend split by model rather than by stage. A run uses a "
+            "chat model and an embedding model at a hundredth of the price, and "
+            "only this split can be checked against a provider's invoice."
+        ),
     )
 
 

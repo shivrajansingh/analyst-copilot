@@ -199,6 +199,40 @@ would collapse four distinct stages into one number.
 none of those, so the strip is ink and accent only. See
 [Design system](18-design-system.md).
 
+### Two splits, neither derived from the other
+
+`stages` answers *where did the time go*; `by_model` answers *what will the
+provider charge me*. `by_model` is aggregated from the calls rather than folded
+out of the stages, because reading a model off a stage is an inference — one
+that holds today and would rot the first time a stage used two models. Both sum
+to the same total, and the tests assert it.
+
+## The session total
+
+`SessionCost` sits in the chat top bar and reports what the **thread** has cost,
+not what the last answer did. Those are different questions, and the second is
+the one asked at the end of the month. Hovering gives model → tokens → cost.
+
+It sums only the answers on screen, which makes two cases worth handling
+honestly:
+
+- **A thread mixing priced and unpriced answers** shows `≥` and the priced
+  subtotal, with a note saying how many are missing. This is deliberately *not*
+  the rule a single answer follows. Within one answer the calls are all part of
+  one number, so a partial total would be a lie; a thread's answers are separate
+  facts, so a floor plus a note is the honest report. With nothing priced at
+  all, it says so and shows no dollars.
+- **Answers predating a field** — history holds answers with no `by_model`, and
+  older ones with no per-stage model either. Their spend is real and is in the
+  headline, so it appears as a **`not attributed`** row rather than vanishing.
+  A breakdown that disagrees with the total above it teaches an analyst to
+  distrust a number that is correct, which is worse than admitting the gap.
+
+Nothing is ever re-priced retroactively. A stored `usage` records what was
+served, and an answer given before a rate was configured genuinely had no price.
+
+---
+
 [`docs/mocks/token-cost.html`](mocks/token-cost.html) is the pixel reference:
 six states across both themes and all five accents, with a spec overlay. Open it
 in a browser before changing the strip's spacing.

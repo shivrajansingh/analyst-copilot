@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from contextvars import ContextVar
 from typing import Dict, Iterator, Optional, Tuple
 
-from analyst_copilot.usage.models import StageUsage, Usage, UsageReport
+from analyst_copilot.usage.models import ModelUsage, StageUsage, Usage, UsageReport
 from analyst_copilot.usage.pricing import PriceBook
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,9 @@ class UsageMeter:
         self._lock = threading.Lock()
         #: Insertion-ordered, so the report reads in the order the run happened.
         self._stages: Dict[str, StageUsage] = {}
+        #: The same spend keyed by model, accumulated from the calls rather than
+        #: folded out of the stages afterwards.
+        self._by_model: Dict[str, ModelUsage] = {}
         self._models: list[str] = []
         self._calls = 0
 
@@ -96,6 +99,19 @@ class UsageMeter:
                 self._calls += 1
                 if usage.model and usage.model not in self._models:
                     self._models.append(usage.model)
+
+                per_model = self._by_model.get(usage.model)
+                if per_model is None:
+                    per_model = ModelUsage(model=usage.model)
+                    self._by_model[usage.model] = per_model
+                per_model.calls += 1
+                per_model.input_tokens += usage.input_tokens
+                per_model.output_tokens += usage.output_tokens
+                per_model.cached_input_tokens += usage.cached_input_tokens
+                if micro is None:
+                    per_model.priced = False
+                else:
+                    per_model.micro_usd += micro
         except Exception:  # noqa: BLE001 - metering is never load-bearing
             logger.debug("usage not recorded", exc_info=True)
 
@@ -118,6 +134,18 @@ class UsageMeter:
                 for entry in self._stages.values()
             ]
             models = list(self._models)
+            by_model = [
+                ModelUsage(
+                    model=entry.model,
+                    calls=entry.calls,
+                    input_tokens=entry.input_tokens,
+                    output_tokens=entry.output_tokens,
+                    cached_input_tokens=entry.cached_input_tokens,
+                    micro_usd=entry.micro_usd,
+                    priced=entry.priced,
+                )
+                for entry in self._by_model.values()
+            ]
             calls = self._calls
 
         return UsageReport(
@@ -130,6 +158,7 @@ class UsageMeter:
             estimated=any(entry.estimated for entry in stages),
             models=models,
             stages=stages,
+            by_model=by_model,
         )
 
     @property

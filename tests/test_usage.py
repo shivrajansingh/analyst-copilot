@@ -653,3 +653,106 @@ def test_a_stage_cheaper_than_a_micro_dollar_reports_zero_not_a_fraction():
     assert entry.micro_usd == 0
     assert entry.priced is True  # priced, and it still cost something
     assert entry.input_tokens == 26
+
+
+# --------------------------------------------------------------------------- #
+# by model: the split that can be checked against an invoice
+# --------------------------------------------------------------------------- #
+def _two_model_book() -> PriceBook:
+    return PriceBook(
+        chat_model="deepseek-v4-flash",
+        chat_price=Price(0.22, 0.66),
+        embedding_model="qwen/qwen3-embedding-8b",
+        embedding_price=Price(0.01, 0.0),
+    )
+
+
+def test_spend_is_reported_by_model_as_well_as_by_stage():
+    """
+    Two views of one number, and neither is derived from the other.
+
+    By stage answers "where did the time go"; by model answers "what will the
+    provider charge me". Folding the second out of the first would mean reading
+    a model off a stage, which is an inference — this is aggregated from the
+    calls.
+    """
+    meter = usage.UsageMeter(_two_model_book())
+    with usage.metering(meter):
+        with usage.stage("retrieving", "Read the retrieved pages"):
+            usage.record_as(
+                usage.Usage(model="qwen/qwen3-embedding-8b", input_tokens=26),
+                "embedding",
+                "Embedded the query",
+            )
+            usage.record(
+                usage.Usage(model="deepseek-v4-flash", input_tokens=4_281, output_tokens=575)
+            )
+        with usage.stage("validating", "Checked the answer"):
+            usage.record(
+                usage.Usage(model="deepseek-v4-flash", input_tokens=3_326, output_tokens=322)
+            )
+
+    report = meter.report()
+    by_model = {entry.model: entry for entry in report.by_model}
+    assert set(by_model) == {"deepseek-v4-flash", "qwen/qwen3-embedding-8b"}
+
+    chat = by_model["deepseek-v4-flash"]
+    assert chat.calls == 2
+    assert chat.input_tokens == 4_281 + 3_326
+    assert chat.output_tokens == 575 + 322
+    assert chat.total_tokens == 8_504
+
+    embed = by_model["qwen/qwen3-embedding-8b"]
+    assert (embed.calls, embed.input_tokens, embed.output_tokens) == (1, 26, 0)
+
+    # The two splits are the same money, counted two ways.
+    assert sum(entry.micro_usd for entry in report.by_model) == report.micro_usd
+    assert sum(entry.micro_usd for entry in report.stages) == report.micro_usd
+    assert (
+        sum(entry.total_tokens for entry in report.by_model)
+        == report.total_tokens
+    )
+
+
+def test_one_unpriced_model_does_not_make_the_other_unpriced():
+    """
+    Per-model is where an unpriced model stays contained.
+
+    The run's total is withheld -- a total missing half its calls is worse than
+    none -- but the model that *is* priced still reports what it cost, because
+    that figure is complete on its own.
+    """
+    book = PriceBook(chat_model="priced", chat_price=Price(0.22, 0.66))
+    meter = usage.UsageMeter(book)
+    with usage.metering(meter):
+        with usage.stage("retrieving", "Read the retrieved pages"):
+            usage.record(usage.Usage(model="priced", input_tokens=1_000, output_tokens=100))
+        with usage.stage("embedding", "Embedded the query"):
+            usage.record(usage.Usage(model="mystery", input_tokens=26))
+
+    report = meter.report()
+    assert report.priced is False and report.cost_usd is None
+    by_model = {entry.model: entry for entry in report.by_model}
+    assert by_model["priced"].priced is True
+    assert by_model["priced"].to_dict()["cost_usd"] == round((1_000 * 0.22 + 100 * 0.66) / 1e6, 6)
+    assert by_model["mystery"].priced is False
+    assert by_model["mystery"].to_dict()["cost_usd"] is None
+
+
+def test_by_model_survives_the_wire_shape():
+    meter = usage.UsageMeter(_two_model_book())
+    with usage.metering(meter), usage.stage("retrieving", "Read the retrieved pages"):
+        usage.record(usage.Usage(model="deepseek-v4-flash", input_tokens=100, output_tokens=10))
+
+    payload = meter.report().to_dict()
+    assert payload["by_model"] == [
+        {
+            "model": "deepseek-v4-flash",
+            "calls": 1,
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "cached_input_tokens": 0,
+            "total_tokens": 110,
+            "cost_usd": round((100 * 0.22 + 10 * 0.66) / 1e6, 6),
+        }
+    ]
