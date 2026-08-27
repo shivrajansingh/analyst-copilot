@@ -91,13 +91,13 @@ PYTHONPATH=src python scripts/eval/score.py --results data/eval-after-fix.json -
 
 **Measured, first 10 practice questions, same code and same corpus:**
 
-| | Fast path alone | Harness (first cut) |
-|---|---:|---:|
-| Rubric score | **+2** | **−1** |
-| +1 correct answer and location | 3 | 3 |
-| 0 correct answer, wrong page | 2 | 2 |
-| 0 abstained | 4 | 1 |
-| **−1 confidently wrong** | **1** | **4** |
+| | Fast path alone | Harness, first cut | Harness, deep answers validated |
+|---|---:|---:|---:|
+| Rubric score | **+2** | **−1** | **+1** |
+| +1 correct answer and location | 3 | 3 | **4** |
+| 0 correct answer, wrong page | 2 | 2 | 2 |
+| 0 abstained | 4 | 1 | 1 |
+| **−1 confidently wrong** | **1** | **4** | **3** |
 
 The harness found more and abstained less, and the rubric charged twice as much
 for what came with it. This is exactly the warning already recorded in
@@ -121,11 +121,27 @@ is no tier after it, anything but `correct` abstains. The validator prompt now
 leads with direction, period and the form asked for rather than with "is the
 figure on the page".
 
-**Re-measure before trusting any of this.** The open question is whether the
-check is strict enough to convert those −1s to 0s *without* also rejecting the
-answers the deep path gets right — the Activision fixed-asset-turnover question
-(gold 24.26, answered 24.26 from three traced inputs) is the one to watch, since
-a validator that hunts for a computed figure on the page would reject it.
+**Measured after the fix: −1 → +1.** Two points recovered, and the derived
+answer survived (Activision, gold 24.26, answered 24.26 from three traced
+inputs), so passing the derivation to the validator did its job. The
+capital-intensive question flipped from a wrong *yes* to a correct *no* on a gold
+page — a two-point swing on one question from the direction check alone.
+
+**It is still a point behind the pipeline it was meant to improve**, and for the
+same reason: the harness answers where the fast path abstained, and three of
+those answers are wrong. The three that remain:
+
+| Question | What is still wrong |
+|---|---|
+| "What drove operating margin change FY2022?" | 0.3pp against a gold of 1.7%, cited page 20 against gold 26 |
+| Quick ratio "for Q2 FY2023" | Served `found: true` with the text *"the provided excerpts do not report a quick ratio for Q2 FY2023"* — a non-answer that no check rejected |
+| "Which debt securities are registered?" | Still a count of four rather than the three items, so the `form asked for` rule did not fire |
+
+**The next move is abstention, not recall.** Two of the three are answers the
+system should have declined, and the second is the clearest: an answer whose own
+text says the evidence is absent must never be served as found. That is a
+deterministic check, not a judgement — if the answer text disclaims its own
+evidence, abstain.
 
 ### 1. Re-baseline the harness on all 136 questions
 

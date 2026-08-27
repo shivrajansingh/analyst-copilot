@@ -363,13 +363,13 @@ overridable by environment variable.
 First 10 practice questions, same code and same corpus, judged with
 `score.py --judge`:
 
-| | Fast path alone | Harness, first cut |
-|---|---:|---:|
-| **Rubric score** | **+2** | **−1** |
-| +1 correct answer and location | 3 | 3 |
-| 0 correct answer, wrong page | 2 | 2 |
-| 0 abstained | 4 | 1 |
-| **−1 confidently wrong** | **1** | **4** |
+| | Fast path alone | Harness, first cut | Harness, deep answers validated |
+|---|---:|---:|---:|
+| **Rubric score** | **+2** | **−1** | **+1** |
+| +1 correct answer and location | 3 | 3 | **4** |
+| 0 correct answer, wrong page | 2 | 2 | 2 |
+| 0 abstained | 4 | 1 | 1 |
+| **−1 confidently wrong** | **1** | **4** | **3** |
 
 The harness found more and abstained less. The rubric charged twice as much for
 what came with it, and the first cut was **three points worse than the pipeline
@@ -413,9 +413,19 @@ the page, and it is told the figure is *expected* to be absent from that page �
 otherwise the check would reject the Activision `24.26` for the very reason
 verifying-through-inputs exists.
 
-**The open question is whether the check is strict enough to convert those −1s
-without also rejecting what the deep path gets right.** That is a measurement,
-not an argument, and it is item 0 in [PLAN.md](../PLAN.md).
+**Measured: −1 → +1.** Two points recovered. The derived answer survived, so
+passing the derivation to the validator worked as intended, and the
+capital-intensive question flipped from a wrong *yes* to a correct *no* on a gold
+page — two points from the direction check on one question.
+
+It is still a point behind the pipeline it was meant to improve. Three −1s
+remain, and the honest reading is that **abstention, not recall, is what is left
+to fix**: two of the three are answers the system should have declined. The
+sharpest of them is served `found: true` while its own text reads *"the provided
+excerpts do not report a quick ratio for Q2 FY2023"* — an answer that disclaims
+its own evidence should never reach an analyst, and catching that is a
+deterministic check rather than a judgement. Tracked as item 0 in
+[PLAN.md](../PLAN.md).
 
 ---
 
