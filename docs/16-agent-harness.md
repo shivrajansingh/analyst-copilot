@@ -358,6 +358,67 @@ overridable by environment variable.
 
 ---
 
+## What it measured, and what that forced
+
+First 10 practice questions, same code and same corpus, judged with
+`score.py --judge`:
+
+| | Fast path alone | Harness, first cut |
+|---|---:|---:|
+| **Rubric score** | **+2** | **−1** |
+| +1 correct answer and location | 3 | 3 |
+| 0 correct answer, wrong page | 2 | 2 |
+| 0 abstained | 4 | 1 |
+| **−1 confidently wrong** | **1** | **4** |
+
+The harness found more and abstained less. The rubric charged twice as much for
+what came with it, and the first cut was **three points worse than the pipeline
+it was meant to improve**.
+
+This is the failure already on record in
+[Document retrieval](07-hybrid-retrieval.md): *"a change that raised recall@5
+from 4/10 to 7/10 lowered the rubric score, because better retrieval also
+converts abstentions into confident wrong answers."* Removing a recall ceiling
+does not by itself earn a mark. It earns the *opportunity* to answer, and an
+answer that is not right costs double.
+
+**None of the four was a fabrication.** Every figure in every one traces to its
+cited page, which is precisely why the deterministic verifier passed them:
+
+| Question | Cited page | What was wrong |
+|---|---|---|
+| "Is 3M capital-intensive based on FY2022 data?" | — | Answered *yes* from figures arguing *no* |
+| Quick ratio "for Q2 of FY2023" | **gold page** | Computed from the **March** balance sheet |
+| "Which debt securities are registered?" | **gold page** | A count of *four*, one of which had matured |
+| "What drove operating margin change?" | — | 0.3pp against a gold of 1.7% |
+
+Two of the four landed on the *correct gold page* and were still wrong. That is
+the sharpest statement of what digit-tracing cannot do: it proves a figure is on
+a page, and it cannot tell whether that figure is the right one for the question.
+
+Two changes came out of this, both in the [validator](#tier-2--validation):
+
+1. **The deep path now faces the meaning check too.** Only fast answers did
+   before, which was a gap — a deep answer got deterministic verification and
+   nothing else. Since there is no tier after the deep path, anything but
+   `correct` now **abstains**: every deep answer this catches is a −1 that
+   becomes a 0.
+2. **The check leads with direction, period and form**, not with "is the figure
+   on the page". Does the conclusion follow from the figures? Is this the column
+   the question asked about? Does a question asking *which* get the items rather
+   than a count of them?
+
+A derived answer's expression and inputs are passed to the validator along with
+the page, and it is told the figure is *expected* to be absent from that page —
+otherwise the check would reject the Activision `24.26` for the very reason
+verifying-through-inputs exists.
+
+**The open question is whether the check is strict enough to convert those −1s
+without also rejecting what the deep path gets right.** That is a measurement,
+not an argument, and it is item 0 in [PLAN.md](../PLAN.md).
+
+---
+
 ## What it costs
 
 Measured on this corpus with `deepseek-v4-flash`:
