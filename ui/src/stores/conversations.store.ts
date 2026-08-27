@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ChatResponse } from '@/api/types'
 import { conversationsApi } from '@/api/endpoints/conversations'
+import { normalizeChatResponse } from '@/api/normalize'
 
 export interface Message {
   id: string
@@ -188,7 +189,8 @@ function _fromDetail(row: {
       role: message.role,
       content: message.content,
       created_at: message.created_at,
-      ...(message.result ? { result: message.result } : {}),
+      // Stored answers may predate fields the components now read.
+      ...(message.result ? { result: normalizeChatResponse(message.result) } : {}),
     })),
   }
 }

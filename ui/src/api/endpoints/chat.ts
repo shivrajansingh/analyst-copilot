@@ -1,4 +1,5 @@
 import { ApiError, api } from '../client'
+import { normalizeChatResponse } from '../normalize'
 import type { ChatResponse, StageEvent } from '../types'
 
 /** One parsed server-sent event. */
@@ -80,7 +81,8 @@ async function askStreaming(
       buffer = rest
       for (const event of events) {
         if (event.name === 'stage') onStage?.(event.data as StageEvent)
-        else if (event.name === 'answer') answer = event.data as ChatResponse
+        else if (event.name === 'answer')
+          answer = normalizeChatResponse(event.data as ChatResponse)
         else if (event.name === 'error') {
           const { code, message } = event.data as { code: string; message: string }
           throw new ApiError(409, code, message)
@@ -102,15 +104,19 @@ async function askStreaming(
 export const chatApi = {
   /** Ask a filing. Retrieval spans every indexed document; the answer cites one. */
   askFiling: (collection: string, question: string, conversationId?: string) =>
-    api.post<ChatResponse>('/chat', { collection, question, conversation_id: conversationId }),
+    api
+      .post<ChatResponse>('/chat', { collection, question, conversation_id: conversationId })
+      .then(normalizeChatResponse),
 
   /** Ask a single document, for callers that already know which one. */
   ask: (docName: string, question: string, conversationId?: string) =>
-    api.post<ChatResponse>('/chat', {
-      doc_name: docName,
-      question,
-      conversation_id: conversationId,
-    }),
+    api
+      .post<ChatResponse>('/chat', {
+        doc_name: docName,
+        question,
+        conversation_id: conversationId,
+      })
+      .then(normalizeChatResponse),
 
   /** Ask a filing, streaming the progress that produced the answer. */
   streamFiling: (collection: string, question: string, options: AskOptions = {}) =>
