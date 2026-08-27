@@ -72,7 +72,7 @@ It also rewrites the question so it stands alone ("and the year before?" becomes
 a full question), and picks which files are worth searching.
 
 Full details, including the escape hatches that stop a wrong guess losing your
-answer: **[the planner](19-planner-agent.md)**.
+answer: **[the planner](20-planner-agent.md)**.
 
 ---
 
@@ -417,7 +417,7 @@ overridable by environment variable.
 | `agent_decompose` | `true` | Split questions that ask several things |
 | `agent_history_turns` | `6` | Chat turns shown, so "and the year before?" works |
 
-Planner settings are in [the planner doc](19-planner-agent.md#settings).
+Planner settings are in [the planner doc](20-planner-agent.md#settings).
 
 ---
 
