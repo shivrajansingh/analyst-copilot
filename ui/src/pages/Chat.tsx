@@ -53,6 +53,27 @@ export function ChatPage() {
   const evidenceOpen = useUiStore((state) => state.evidenceOpen)
   const setEvidenceOpen = useUiStore((state) => state.setEvidenceOpen)
 
+  const [evidenceWidth, setEvidenceWidth] = useState<number>(320)
+  const [resizingEvidence, setResizingEvidence] = useState(false)
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = evidenceWidth
+    const onMouseMove = (move: MouseEvent) => {
+      const newWidth = startWidth + (startX - move.clientX)
+      setEvidenceWidth(Math.max(200, Math.min(600, newWidth)))
+    }
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      setResizingEvidence(false)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    setResizingEvidence(true)
+  }
+
   const bottomRef = useRef<HTMLDivElement>(null)
   // A conversation is pinned to the filing it was started in, so every
   // citation in the thread stays checkable against the same set of documents.
@@ -277,19 +298,28 @@ export function ChatPage() {
         </div>
       </section>
 
-      <aside
-        className={cn(
-          'hidden shrink-0 border-l border-line bg-surface transition-[width] duration-200 lg:block',
-          evidenceOpen ? 'w-80 xl:w-96' : 'w-0 overflow-hidden border-l-0',
-        )}
-      >
-        <div className="scrollbar-slim h-full overflow-y-auto">
-          <h2 className="border-b border-line px-4 py-3 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
-            Evidence
-          </h2>
-          <EvidencePanel result={shownEvidence} />
-        </div>
-      </aside>
+      {evidenceOpen ? (
+        <>
+          <div
+            className="w-1 cursor-col-resize bg-transparent hover:bg-accent/30"
+            onMouseDown={startResize}
+            aria-label="Resize evidence panel"
+          />
+          <aside
+            className="shrink-0 border-l border-line bg-surface lg:block overflow-hidden"
+            style={{ width: `${evidenceWidth}px`, minWidth: 200, maxWidth: 600 }}
+          >
+            <div className="scrollbar-slim h-full overflow-y-auto">
+              <h2 className="border-b border-line px-4 py-3 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
+                Evidence
+              </h2>
+              <EvidencePanel result={shownEvidence} />
+            </div>
+          </aside>
+        </>
+      ) : (
+        <aside className="hidden shrink-0 w-0 overflow-hidden border-l-0 lg:block" />
+      )}
 
       <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)} title="Evidence">
         <EvidencePanel result={shownEvidence} />
