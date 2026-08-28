@@ -343,6 +343,83 @@ class AnswerPartResponse(BaseModel):
     inputs: List[EvidenceInputResponse] = Field(default_factory=list)
 
 
+class StageUsageResponse(BaseModel):
+    """What one stage of the pipeline spent."""
+
+    stage: str = Field(description="Stage key: planning, retrieving, deep_search, embedding…")
+    label: str = Field(
+        description="Prose for the analyst, written where the counts are known — "
+        "\"Read all 118 pages · 31 agents\"."
+    )
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0
+    cost_usd: Optional[float] = Field(
+        default=None,
+        description="Null when a model in this stage has no configured price.",
+    )
+    models: List[str] = Field(
+        default_factory=list,
+        description="Which models spent under this stage. Almost always one.",
+    )
+    estimated: bool = Field(
+        default=False,
+        description="True when a call here was counted locally, not reported by the provider.",
+    )
+
+
+class ModelUsageResponse(BaseModel):
+    """Everything one model spent, across every stage that used it."""
+
+    model: str
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cached_input_tokens: int = 0
+    total_tokens: int
+    cost_usd: Optional[float] = None
+
+
+class UsageResponse(BaseModel):
+    """
+    What this answer cost: tokens spent, and the price of them where one is known.
+
+    `cost_usd` is null and `priced` is false when no rate is configured for the
+    model. That is deliberate and not a gap to fill in the client: this service
+    talks to an OpenAI-compatible gateway, which can put any model behind any
+    name at any margin, and a cost invented from an assumed rate is worse than
+    no cost at all — an analyst can act on a number.
+
+    `estimated` is true when the provider omitted `usage` and the tokens were
+    counted locally. Render it: an estimate shown identically to a measurement
+    is the same class of dishonesty as an unverified figure.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cached_input_tokens: int = 0
+    calls: int = Field(description="Model calls made, including the query embedding.")
+    cost_usd: Optional[float] = None
+    priced: bool = True
+    estimated: bool = False
+    models: List[str] = Field(
+        default_factory=list, description="Every model this answer used, in first-use order."
+    )
+    stages: List[StageUsageResponse] = Field(
+        default_factory=list, description="The breakdown, in the order the run happened."
+    )
+    by_model: List[ModelUsageResponse] = Field(
+        default_factory=list,
+        description=(
+            "The same spend split by model rather than by stage. A run uses a "
+            "chat model and an embedding model at a hundredth of the price, and "
+            "only this split can be checked against a provider's invoice."
+        ),
+    )
+
+
 class ChatResponse(BaseModel):
     """
     An answer with its evidence, or a decline.
@@ -385,6 +462,13 @@ class ChatResponse(BaseModel):
     )
     latency_ms: Optional[int] = Field(
         default=None, description="Wall time of the QA pipeline, not the HTTP call."
+    )
+    usage: Optional[UsageResponse] = Field(
+        default=None,
+        description=(
+            "Tokens spent answering this message and what they cost. Null when "
+            "the run was not metered."
+        ),
     )
 
     # -- how the answer was reached ---------------------------------------- #

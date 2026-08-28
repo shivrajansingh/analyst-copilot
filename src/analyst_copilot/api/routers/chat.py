@@ -11,6 +11,11 @@ answer still arrives in one piece, already verified, because a figure that
 renders before the verifier has finished with it is an unproven figure on
 screen — which is the one thing this product exists to prevent.
 
+Every answer reports what it cost. The figure is final rather than live: it
+arrives with the answer, not as it accrues, for the same reason the answer does
+not stream. A stopped run reports its spend too — that is the moment an analyst
+most wants the number, because they have paid for a fan-out that proved nothing.
+
 A streaming answer can also be stopped, and stopping it stops the *work* rather
 than just the reporting of it. The pipeline runs in a worker thread that spawns
 a pool of its own, and no amount of `asyncio` cancellation reaches either — so
@@ -33,6 +38,7 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from analyst_copilot import usage as metering
 from analyst_copilot.agent import AnalystAgent, StageEvent
 from analyst_copilot.agent.cancellation import CancelToken, Cancelled
 from analyst_copilot.agent.trace import TraceEvent
@@ -52,7 +58,7 @@ from analyst_copilot.api.errors import (
     UpstreamUnavailable,
 )
 from analyst_copilot.api.filings import FilingService
-from analyst_copilot.api.schemas import ChatRequest, ChatResponse
+from analyst_copilot.api.schemas import ChatRequest, ChatResponse, UsageResponse
 from analyst_copilot.api.services.conversations import ConversationService
 from analyst_copilot.api.services.runs import RunRegistry
 from analyst_copilot.collections.indexer import CollectionIndexer
@@ -146,6 +152,9 @@ async def chat_stream(
     loop = asyncio.get_running_loop()
     run_id, cancel = runs.start(user_id)
     started = time.perf_counter()
+    #: Built here rather than inside the pipeline so a stop can still read it:
+    #: `_answer` raises `Cancelled` out before it returns anything at all.
+    meter = metering.UsageMeter(metering.prices_from_settings())
     #: The last milestone reported, so a stop can say where it stopped.
     reached: Dict[str, Any] = {}
 
@@ -167,7 +176,7 @@ async def chat_stream(
         try:
             response = await _answer(
                 request, filings, collections, agent, conversations, user_id,
-                on_stage, on_trace, cancel,
+                on_stage, on_trace, cancel, meter,
             )
             await queue.put(("answer", response.model_dump(mode="json")))
         except Cancelled:
@@ -175,7 +184,7 @@ async def chat_stream(
             # renders failures in red would show the analyst their own decision
             # as a bug. Nothing was persisted -- `_answer` raises out before it
             # records anything -- so the thread has no half-finished turn in it.
-            await queue.put(("cancelled", _stopped_at(reached, started)))
+            await queue.put(("cancelled", _stopped_at(reached, started, meter)))
         except ApiError as exc:
             # Any handled failure -- not indexed, provider down, someone else's
             # conversation -- reaches the reader as an `error` event. The HTTP
@@ -260,14 +269,23 @@ async def cancel_run(
 # --------------------------------------------------------------------------- #
 # shared path
 # --------------------------------------------------------------------------- #
-def _stopped_at(reached: Dict[str, Any], started: float) -> Dict[str, Any]:
+def _stopped_at(
+    reached: Dict[str, Any],
+    started: float,
+    meter: Optional[metering.UsageMeter] = None,
+) -> Dict[str, Any]:
     """
-    Where a stopped run had got to, for the `cancelled` event.
+    Where a stopped run had got to, and what it spent getting there.
 
     Only what the last milestone already carried: the stage, and the reader
     counts when the deep path was running. There is no partial answer to report
     and there never will be — the answer is withheld until it is verified, which
     is the same rule that keeps tokens from streaming.
+
+    The cost is the exception, and it is not a partial answer: those tokens
+    were genuinely spent, whatever the run proved. Reporting them is the
+    difference between an analyst who knows what stopping saved and one who
+    is guessing.
     """
     payload: Dict[str, Any] = {
         "stage": reached.get("stage"),
@@ -277,6 +295,8 @@ def _stopped_at(reached: Dict[str, Any], started: float) -> Dict[str, Any]:
     for field in ("done", "total"):
         if reached.get(field) is not None:
             payload[field] = reached[field]
+    if meter is not None and not meter.empty:
+        payload["usage"] = meter.report().to_dict()
     return payload
 
 
@@ -290,6 +310,7 @@ async def _answer(
     on_stage,
     on_trace=None,
     cancel: Optional[CancelToken] = None,
+    meter: Optional[metering.UsageMeter] = None,
 ) -> ChatResponse:
     """
     Answer, then record the exchange. Used by both endpoints.
@@ -297,7 +318,12 @@ async def _answer(
     A `Cancelled` from the pipeline propagates: it must reach the caller before
     the recording below, because a stopped turn is not a turn — persisting one
     would put a question with no answer into a thread's history.
+
+    The streaming endpoint passes its own meter, because it needs to read the
+    spend of a run that never returns an answer. The blocking one has no such
+    need and gets a fresh meter here.
     """
+    meter = meter or metering.UsageMeter(metering.prices_from_settings())
     ready = await run_in_threadpool(_scope_is_ready, request, filings, collections)
     history = await _history(conversations, user_id, request.conversation_id)
 
@@ -315,6 +341,7 @@ async def _answer(
             scope_ready=ready,
             on_trace=on_trace,
             cancel=cancel,
+            meter=meter,
         )
     except ValueError as exc:
         raise UpstreamUnavailable(f"The language model could not be reached: {exc}") from exc
@@ -331,6 +358,8 @@ async def _answer(
 
     latency_ms = round((time.perf_counter() - started) * 1000)
     response = ChatResponse.from_agent(answer)
+    if not meter.empty:
+        response.usage = UsageResponse.model_validate(meter.report().to_dict())
 
     if request.conversation_id:
         try:

@@ -1,6 +1,7 @@
 import { Square } from 'lucide-react'
 import type { CancelledEvent, StageEvent, TraceEvent } from '@/api/types'
 import { ThinkingTrail } from './ThinkingTrail'
+import { UsageStrip } from './UsageStrip'
 
 /**
  * A run the analyst stopped.
@@ -13,6 +14,11 @@ import { ThinkingTrail } from './ThinkingTrail'
  *
  * Neutral, not red. Nothing failed here; the analyst changed their mind, and
  * colouring that as an error teaches them to read their own decision as a bug.
+ *
+ * What it *does* show is the spend. Tokens are not an answer — they were
+ * genuinely bought whatever the run proved — and this is the moment an analyst
+ * most wants the number, because they have just paid for a fan-out that proved
+ * nothing.
  */
 const STAGE_LABELS: Record<StageEvent['stage'], string> = {
   planning: 'Working out what this needs',
@@ -87,6 +93,8 @@ export function StoppedCard({
           <ThinkingTrail traces={traces} />
         </div>
       )}
+
+      {at.usage && <UsageStrip usage={at.usage} className="mt-3" />}
     </article>
   )
 }

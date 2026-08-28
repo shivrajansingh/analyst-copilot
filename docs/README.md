@@ -24,6 +24,7 @@ flowchart LR
 | [The planner](20-planner-agent.md) | Deciding what a message needs, and the escape hatches |
 | [The agent harness](16-agent-harness.md) | The three tiers, the readers, the tools |
 | [Stopping a run](19-stopping-a-run.md) | What it takes to actually stop work in a worker thread |
+| [What an answer cost](21-token-cost.md) | Token usage and price, and the two things it refuses to guess |
 | [Tier 1: search and answer](09-qa-pipeline.md) | Retrieve, ask, verify |
 | [Finding the right page](07-hybrid-retrieval.md) | How the two searches are blended, with measurements |
 | **Reading documents** | |

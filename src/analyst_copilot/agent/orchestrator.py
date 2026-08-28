@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
 
@@ -43,6 +44,7 @@ from analyst_copilot.agent.prompts import (
 from analyst_copilot.agent.reader import ShardReader, _as_page_index
 from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.runtime import AgentRuntime
+from analyst_copilot import usage as metering
 from analyst_copilot.agent.tools import (
     SUBMIT_ANSWER,
     CalculateTool,
@@ -228,7 +230,10 @@ class DeepSearchOrchestrator:
         findings: List[Finding] = []
         completed = 0
 
-        with ThreadPoolExecutor(
+        with metering.stage(
+            Stage.DEEP_SEARCH.value,
+            f"Read all {corpus.page_count} pages · {len(shards)} agents",
+        ), ThreadPoolExecutor(
             max_workers=min(self._max_concurrency, len(shards)),
             thread_name_prefix="reader",
         ) as pool:
@@ -238,8 +243,15 @@ class DeepSearchOrchestrator:
                 tracing.emit(
                     on_trace, tracing.agent_status(label, tracing.AgentStatus.RUNNING)
                 )
+                # `copy_context().run(...)` rather than a bare submit: a
+                # ThreadPoolExecutor worker starts with an empty context, so
+                # without this the thirty-one readers -- most of what a deep
+                # run costs -- would record their tokens into no meter at all
+                # and the reported total would be quietly, hugely wrong.
+                context_for_reader = copy_context()
                 futures[
                     pool.submit(
+                        context_for_reader.run,
                         reader.read,
                         question,
                         shard,
@@ -365,20 +377,21 @@ class DeepSearchOrchestrator:
         tracing.emit(
             on_trace, tracing.agent_status("synthesis", tracing.AgentStatus.RUNNING)
         )
-        run = runtime.run(
-            system=SYNTHESIS_SYSTEM,
-            user=build_synthesis_prompt(
-                question=question,
-                findings_report=format_findings(ranked) or NO_FINDINGS_REPORT,
-                documents=corpus.available_documents(),
-                pages_read=result.pages_read,
-                context=context,
-            ),
-            registry=registry,
-            terminal_tools=(SUBMIT_ANSWER,),
-            on_trace=tracing.scoped(on_trace, "synthesis"),
-            cancel=stop,
-        )
+        with metering.stage(Stage.SYNTHESIZING.value, "Composed the answer"):
+            run = runtime.run(
+                system=SYNTHESIS_SYSTEM,
+                user=build_synthesis_prompt(
+                    question=question,
+                    findings_report=format_findings(ranked) or NO_FINDINGS_REPORT,
+                    documents=corpus.available_documents(),
+                    pages_read=result.pages_read,
+                    context=context,
+                ),
+                registry=registry,
+                terminal_tools=(SUBMIT_ANSWER,),
+                on_trace=tracing.scoped(on_trace, "synthesis"),
+                cancel=stop,
+            )
 
         if run.error or not run.reported:
             # Synthesis failed, but the readers' work is still good. Fall back to

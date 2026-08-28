@@ -49,6 +49,34 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = ""
 
+    # What a token costs, in USD per million tokens.
+    #
+    # Deliberately unset by default and deliberately not guessed. This service
+    # talks to an OpenAI-compatible gateway, and a gateway can put any model
+    # behind any name at any margin -- so a rate nobody configured is reported
+    # as "no price", never as a number. Tokens are still counted and shown.
+    # A rate of 0 is a legitimate setting for a locally hosted model.
+    chat_price_input: float = 0.0
+    chat_price_output: float = 0.0
+    #: Rate for input the provider served from its own cache. Falls back to the
+    #: full input rate when unset, which is the conservative reading.
+    chat_price_cached_input: float = 0.0
+
+    # Peak pricing, for providers that charge more during their busy hours.
+    #
+    # Optional. Set these and a window and the rates above become the *off-peak*
+    # tier; leave them and the price is flat. This exists because a provider
+    # that doubles its rate for seven hours a day cannot be described by one
+    # number, and reporting one of the two around the clock would be
+    # confidently wrong for most of a working day in some timezone.
+    chat_price_peak_input: float = 0.0
+    chat_price_peak_output: float = 0.0
+    chat_price_peak_cached_input: float = 0.0
+    #: Half-open UTC hour windows, e.g. "01-04,06-10". Empty means never peak.
+    chat_price_peak_hours_utc: str = ""
+
+    embedding_price_input: float = 0.0
+
     # Legacy aliases (used when EMBEDDING_* vars are not set)
     ollama_url: str = "http://localhost:11434"
     ollama_embedding_model: str = "bge-m3"

@@ -12,6 +12,7 @@ import { ChatBubble } from '@/components/chat/ChatBubble'
 import { Composer } from '@/components/chat/Composer'
 import { DeclineCard } from '@/components/chat/DeclineCard'
 import { FilingPicker } from '@/components/chat/FilingPicker'
+import { SessionCost } from '@/components/chat/SessionCost'
 import { StoppedCard } from '@/components/chat/StoppedCard'
 import { ThinkingIndicator } from '@/components/chat/ThinkingIndicator'
 import { EvidencePanel } from '@/components/evidence/EvidencePanel'
@@ -342,17 +343,29 @@ export function ChatPage() {
               }}
             />
           </div>
-          <button
-            onClick={() => setEvidenceOpen(!evidenceOpen)}
-            aria-label={evidenceOpen ? 'Hide evidence' : 'Show evidence'}
-            className="hidden rounded-lg border border-line bg-surface p-2 text-ink-subtle transition-colors hover:text-ink lg:block"
-          >
-            {evidenceOpen ? (
-              <PanelRightClose className="h-4 w-4" />
-            ) : (
-              <PanelRightOpen className="h-4 w-4" />
-            )}
-          </button>
+          {/* What the thread has cost, not what the last answer did. Pushed to
+              the right of the bar, beside the evidence toggle: it is a property
+              of the conversation, so it belongs in the conversation's own bar
+              rather than on any one answer. */}
+          <div className="ml-auto flex shrink-0 items-center gap-3">
+            <SessionCost
+              usages={messages
+                .filter((message) => message.role === 'assistant' && !message.error)
+                .map((message) => message.result?.usage)}
+            />
+
+            <button
+              onClick={() => setEvidenceOpen(!evidenceOpen)}
+              aria-label={evidenceOpen ? 'Hide evidence' : 'Show evidence'}
+              className="hidden rounded-lg border border-line bg-surface p-2 text-ink-subtle transition-colors hover:text-ink lg:block"
+            >
+              {evidenceOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </header>
 
         <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto">
