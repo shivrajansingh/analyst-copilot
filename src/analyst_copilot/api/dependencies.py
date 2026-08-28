@@ -21,6 +21,7 @@ from analyst_copilot.api.filings import FilingService
 from analyst_copilot.api.jobs import IndexingJobManager
 from analyst_copilot.api.services.collections import CollectionApiService
 from analyst_copilot.api.services.conversations import ConversationService
+from analyst_copilot.api.services.runs import RunRegistry
 from analyst_copilot.agent import AnalystAgent
 from analyst_copilot.collections.indexer import CollectionIndexer
 from analyst_copilot.collections.searcher import CollectionSearcher
@@ -89,6 +90,17 @@ def get_analyst_agent() -> AnalystAgent:
         qa_service=get_qa_service(),
         collection_indexer=get_collection_indexer(),
     )
+
+
+@lru_cache
+def get_run_registry() -> RunRegistry:
+    """
+    The answers currently in flight, so `/chat/runs/{id}/cancel` can find one.
+
+    One per process because the tokens it hands out signal that process's own
+    threads. See `services/runs.py` for what would change if this were scaled out.
+    """
+    return RunRegistry()
 
 
 def get_filing_service(
@@ -165,5 +177,6 @@ def reset_dependencies() -> None:
     get_job_manager.cache_clear()
     get_qa_service.cache_clear()
     get_analyst_agent.cache_clear()
+    get_run_registry.cache_clear()
     get_session_factory.cache_clear()
     get_conversation_service.cache_clear()

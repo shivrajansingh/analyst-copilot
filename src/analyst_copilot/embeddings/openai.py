@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from openai import OpenAI
 
 from analyst_copilot.config.settings import get_settings
+from analyst_copilot import usage as metering
 from analyst_copilot.embeddings.base import EmbeddingClient
 
 
@@ -62,9 +63,41 @@ class OpenAICompatibleEmbeddingClient(EmbeddingClient):
                 model=self._model,
                 input=batch,
             )
+            self._meter(response, batch)
             vectors = [item.embedding for item in response.data]
             all_vectors.extend(vectors)
             if self._dimensions is None and vectors:
                 self._dimensions = len(vectors[0])
 
         return all_vectors
+
+    def _meter(self, response: object, batch: List[str]) -> None:
+        """
+        Charge this embedding call to the run that asked for it.
+
+        Indexing a filing embeds thousands of pages and is not part of any
+        answer, so this only lands anywhere when a run is metering -- which, in
+        practice, means the one query embedding a question needs.
+
+        Embeddings have no output tokens; the model returns vectors, and a
+        vector is not billed by the token.
+        """
+        try:
+            reported = getattr(response, "usage", None)
+            tokens = int(getattr(reported, "prompt_tokens", 0) or 0)
+            estimated = False
+            if not tokens:
+                tokens = sum(metering.count_text(text) for text in batch)
+                estimated = True
+            metering.record_as(
+                metering.Usage(
+                    model=self._model,
+                    input_tokens=tokens,
+                    output_tokens=0,
+                    estimated=estimated,
+                ),
+                "embedding",
+                "Embedded the query",
+            )
+        except Exception:  # noqa: BLE001 - metering is never load-bearing
+            pass

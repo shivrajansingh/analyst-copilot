@@ -40,9 +40,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
+from analyst_copilot import usage as metering
+from analyst_copilot.agent.cancellation import CancelToken, Cancelled, token_or_never
+from analyst_copilot.agent.cards import DocumentCard, cards_for
 from analyst_copilot.agent.conversation import ConversationResponder
+from analyst_copilot.agent.facts import corpus_facts
 from analyst_copilot.agent.corpus import DocumentCorpus, DocumentUnavailable
 from analyst_copilot.agent.decompose import QuestionDecomposer
 from analyst_copilot.agent.models import (
@@ -57,7 +61,7 @@ from analyst_copilot.agent.models import (
 )
 from analyst_copilot.agent.orchestrator import DeepSearchOrchestrator
 from analyst_copilot.agent.prompts import format_history
-from analyst_copilot.agent.router import IntentRouter
+from analyst_copilot.agent.planner import Plan, PlanKind, Planner
 from analyst_copilot.agent.validator import AnswerValidator, Validation, Verdict
 from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.verification import verify_agent_answer
@@ -90,15 +94,30 @@ class Scope:
     documents: List[str] = field(default_factory=list)
     build_corpus: Optional[Callable[[], Optional[DocumentCorpus]]] = None
     _corpus: Optional[DocumentCorpus] = None
-    _resolved: bool = False
 
     @property
     def corpus(self) -> Optional[DocumentCorpus]:
-        """The readable documents in scope, or None if none are readable yet."""
-        if not self._resolved:
-            self._resolved = True
-            self._corpus = self.build_corpus() if self.build_corpus else None
+        """
+        The readable documents in scope, or None if none are readable yet.
+
+        Only a *successful* resolution is cached. Tier 1 writes the Markdown the
+        agents read, so anything that peeks before it -- the planner building
+        document cards, for one -- would otherwise latch None in for the whole
+        request and silently disable the deep path.
+        """
+        if self._corpus is None and self.build_corpus is not None:
+            self._corpus = self.build_corpus()
         return self._corpus
+
+    def page_counts(self) -> Dict[str, int]:
+        """
+        Pages per document, for the planner's cards. Empty is fine.
+
+        Never forces anything: if the Markdown is not written yet the cards
+        simply carry no page counts, which costs the planner nothing.
+        """
+        corpus = self.corpus
+        return corpus.page_counts() if corpus is not None else {}
 
     @property
     def name(self) -> str:
@@ -118,7 +137,7 @@ class AnalystAgent:
         chat_client: Optional[ChatClient] = None,
         collection_indexer=None,
         settings: Optional[Settings] = None,
-        router: Optional[IntentRouter] = None,
+        planner: Optional[Planner] = None,
         decomposer: Optional[QuestionDecomposer] = None,
         validator: Optional[AnswerValidator] = None,
         orchestrator: Optional[DeepSearchOrchestrator] = None,
@@ -128,7 +147,7 @@ class AnalystAgent:
         self._qa = qa_service or QuestionAnsweringService()
         self._chat_client = chat_client
         self._collection_indexer = collection_indexer
-        self._router = router
+        self._planner_agent = planner
         self._decomposer = decomposer
         self._validator = validator
         self._orchestrator = orchestrator
@@ -147,10 +166,15 @@ class AnalystAgent:
             self._chat_client = get_chat_client()
         return self._chat_client
 
-    def _intents(self) -> IntentRouter:
-        if self._router is None:
-            self._router = IntentRouter(self._chat())
-        return self._router
+    def _planner(self) -> Planner:
+        if self._planner_agent is None:
+            self._planner_agent = Planner(
+                self._chat(),
+                scope_documents=self._settings.planner_scope_documents,
+                require_named_year=self._settings.planner_scope_requires_year,
+                min_confidence=self._settings.planner_min_confidence,
+            )
+        return self._planner_agent
 
     def _splitter(self) -> QuestionDecomposer:
         if self._decomposer is None:
@@ -192,6 +216,8 @@ class AnalystAgent:
         on_stage: Optional[StageCallback] = None,
         scope_ready: Optional[bool] = None,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
+        meter: Optional[metering.UsageMeter] = None,
     ) -> AgentAnswer:
         """
         Answer one message.
@@ -201,34 +227,60 @@ class AnalystAgent:
         It is checked only for a document question, which is the point: a
         greeting is answered whether or not anything has finished indexing, and
         that is exactly the case where a user is most likely to type one.
+
+        `cancel` stops the run. It raises `Cancelled` out of this method rather
+        than returning an abstention, because "stopped" and "the filing does not
+        say" are different facts and only one of them is about the document.
+
+        `meter` counts what the answer costs. It is bound to the context here
+        rather than threaded through the twenty calls below, and the binding
+        happens *inside* this method on purpose: the pipeline runs in a worker
+        thread, and a context set by the caller is not reliably the context this
+        body runs in.
         """
+        with metering.metering(meter):
+            return self._answer(
+                message, collection, doc_name, history, on_stage, scope_ready,
+                on_trace, cancel,
+            )
+
+    def _answer(
+        self,
+        message: str,
+        collection: Optional[str],
+        doc_name: Optional[str],
+        history: Optional[Sequence[dict]],
+        on_stage: Optional[StageCallback],
+        scope_ready: Optional[bool],
+        on_trace: Optional[tracing.TraceCallback],
+        cancel: Optional[CancelToken],
+    ) -> AgentAnswer:
+        stop = token_or_never(cancel)
         context = format_history(history or [], limit=self._settings.agent_history_turns)
         scope = self._resolve_scope(collection, doc_name)
+        cards = cards_for(scope.documents, scope.page_counts())
 
-        _emit(on_stage, StageEvent(Stage.ROUTING, "reading the message"))
-        routing = self._intents().route(message, context)
+        stop.raise_if_cancelled()
+        _emit(on_stage, StageEvent(Stage.PLANNING, "deciding what this needs"))
+        with metering.stage(Stage.PLANNING.value, "Understood the question"):
+            plan = self._decide(message, cards, context, on_trace)
 
-        if routing.intent in (Intent.SMALLTALK, Intent.CAPABILITY):
-            reply = self._conversation().reply(
-                message,
-                collection=scope.collection,
-                documents=scope.documents,
-                history=context,
+        if not plan.kind.needs_documents:
+            answered = self._answer_without_documents(
+                message, plan, scope, cards, context, on_stage, on_trace
             )
-            _emit(on_stage, StageEvent(Stage.DONE, "replied"))
-            return AgentAnswer(
-                question=message,
-                answer=reply,
-                # A greeting was answered, so this is not a refusal -- but there
-                # is nothing to cite, and callers branch on `mode` before
-                # `found` for exactly this case.
-                found=True,
-                mode=AnswerMode.CONVERSATIONAL,
-                intent=routing.intent,
-                doc_name=scope.doc_name or "",
-                collection=scope.collection,
-                searched_documents=0,
+            if answered is not None:
+                return answered
+            # The reply handed it back: it needed the document after all. This is
+            # the escape that stops a misclassification from being final.
+            plan = Plan(
+                kind=PlanKind.DOCUMENT,
+                question=plan.question,
+                documents=[],
+                confidence=0.0,
+                reason=f"{plan.kind.value} reply asked for the document",
             )
+            tracing.emit(on_trace, tracing.thought("planner", plan.reason))
 
         if scope_ready is False or not scope.searchable:
             _emit(on_stage, StageEvent(Stage.DONE, "nothing to search"))
@@ -237,16 +289,21 @@ class AnalystAgent:
                 answer=NOT_FOUND_MESSAGE,
                 found=False,
                 mode=AnswerMode.FAST,
-                intent=routing.intent,
+                intent=_intent_of(plan.kind),
                 doc_name=scope.doc_name or "",
                 collection=scope.collection,
                 searched_documents=0,
                 abstention_reason="no_indexed_documents",
             )
 
-        parts = self._plan(message, context, on_stage)
+        # Researched in its resolved form -- "and the year before?" cannot be
+        # retrieved for, and every stage below needs a question that stands alone.
+        parts = self._plan(plan.question, context, on_stage, stop)
         answered: List[AnswerPart] = []
         for number, part_question in enumerate(parts, start=1):
+            # Between sub-questions: a compound question is several runs' worth
+            # of work, and stopping during the second should not pay for a third.
+            stop.raise_if_cancelled()
             answered.append(
                 self._answer_part(
                     question=part_question,
@@ -256,11 +313,99 @@ class AnalystAgent:
                     part=number,
                     part_total=len(parts),
                     on_trace=on_trace,
+                    cancel=stop,
+                    plan=plan,
                 )
             )
 
         _emit(on_stage, StageEvent(Stage.DONE, "answered"))
-        return self._compose(message, scope, routing.intent, answered)
+        return self._compose(message, scope, plan, answered)
+
+    # -- deciding ----------------------------------------------------------- #
+    def _decide(
+        self,
+        message: str,
+        cards: Sequence[DocumentCard],
+        context: str,
+        on_trace: Optional[tracing.TraceCallback],
+    ) -> Plan:
+        """Ask the planner what this message needs, and report what it said."""
+        if not self._settings.planner_enabled:
+            return Plan(
+                kind=PlanKind.DOCUMENT,
+                question=message,
+                reason="planner disabled",
+                assumed=True,
+            )
+
+        tracing.emit(
+            on_trace, tracing.agent_status("planner", tracing.AgentStatus.RUNNING)
+        )
+        plan = self._planner().plan(message, cards, context)
+
+        told = f"{plan.kind.value}"
+        if plan.question != message:
+            told += f" · rewritten as: {plan.question}"
+        if plan.scoped:
+            told += f" · searching only {', '.join(plan.documents)}"
+        if plan.reason:
+            told += f" — {plan.reason}"
+        tracing.emit(on_trace, tracing.thought("planner", told))
+        tracing.emit(
+            on_trace, tracing.agent_status("planner", tracing.AgentStatus.FOUND)
+        )
+        return plan
+
+    def _answer_without_documents(
+        self,
+        message: str,
+        plan: Plan,
+        scope: Scope,
+        cards: Sequence[DocumentCard],
+        context: str,
+        on_stage: Optional[StageCallback],
+        on_trace: Optional[tracing.TraceCallback],
+    ) -> Optional[AgentAnswer]:
+        """
+        Answer a message that needs no document read, or hand it back.
+
+        Returns None when the reply decided it needed the document after all --
+        the escape that keeps a misclassification from being final. A question
+        about the document *set* gets pre-computed facts and is forbidden from
+        calculating from them, because there is no verifier on this path.
+        """
+        facts = (
+            corpus_facts(cards, scope.collection or scope.doc_name or "")
+            if plan.kind is PlanKind.CORPUS_META
+            else ""
+        )
+        with metering.stage("conversational", "Answered directly"):
+            reply = self._conversation().reply(
+                message,
+                collection=scope.collection,
+                documents=scope.documents,
+                history=context,
+                facts=facts,
+            )
+        if reply.needs_document:
+            _emit(on_stage, StageEvent(Stage.PLANNING, "this needs the filing after all"))
+            return None
+
+        _emit(on_stage, StageEvent(Stage.DONE, "replied"))
+        return AgentAnswer(
+            question=message,
+            answer=reply.text,
+            # The message was answered, so this is not a refusal -- but there is
+            # nothing to cite, and callers branch on `mode` before `found` for
+            # exactly this case.
+            found=True,
+            mode=AnswerMode.CONVERSATIONAL,
+            intent=_intent_of(plan.kind),
+            doc_name=scope.doc_name or "",
+            collection=scope.collection,
+            searched_documents=0,
+            validation=plan.reason or None,
+        )
 
     # -- planning ----------------------------------------------------------- #
     def _plan(
@@ -268,11 +413,14 @@ class AnalystAgent:
         message: str,
         context: str,
         on_stage: Optional[StageCallback],
+        cancel: Optional[CancelToken] = None,
     ) -> List[str]:
         if not self._settings.agent_decompose:
             return [message]
+        token_or_never(cancel).raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.DECOMPOSING, "checking for multiple questions"))
-        decomposition = self._splitter().split(message, context)
+        with metering.stage(Stage.DECOMPOSING.value, "Checked for several questions"):
+            decomposition = self._splitter().split(message, context)
         if decomposition.split:
             _emit(
                 on_stage,
@@ -294,16 +442,20 @@ class AnalystAgent:
         part: int,
         part_total: int,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
+        plan: Optional[Plan] = None,
     ) -> AnswerPart:
+        stop = token_or_never(cancel)
         located = _locator(part, part_total)
 
+        stop.raise_if_cancelled()
         _emit(on_stage, StageEvent(Stage.RETRIEVING, "searching the filing", **located))
         fast = self._fast_path(question, scope)
         escalation = ""
 
         if fast is not None and fast.found:
             validation = self._validate(
-                question, fast, scope, on_stage, located, on_trace
+                question, fast, scope, on_stage, located, on_trace, stop
             )
             if validation.serves:
                 return AnswerPart(
@@ -324,21 +476,33 @@ class AnalystAgent:
         if not (self._settings.agent_deep_search and scope.corpus is not None):
             return _abstained(question, fast, escalation)
 
+        # The tier boundary worth guarding hardest: everything after this line
+        # is the sixty-second path, and none of it should begin for a run that
+        # has already been stopped.
+        stop.raise_if_cancelled()
         _emit(
             on_stage,
             StageEvent(Stage.ESCALATING, "reading the whole filing", **located),
         )
         return self._deep_path(
-            question, scope, context, on_stage, escalation, fast, located, on_trace
+            question, scope, context, on_stage, escalation, fast, located, on_trace,
+            stop, plan,
         )
 
     def _fast_path(self, question: str, scope: Scope) -> Optional[QAAnswer]:
-        """Tier 1: the existing retrieve-and-verify pipeline, unchanged."""
+        """
+        Tier 1: the existing retrieve-and-verify pipeline, unchanged.
+
+        Uninterruptible once entered, and left that way deliberately: it is a
+        retrieval and a single model call, so the whole tier is shorter than the
+        one in-flight call a checkpoint inside it could save.
+        """
         try:
-            if scope.collection:
-                return self._qa.answer_collection(question, scope.collection)
-            if scope.doc_name:
-                return self._qa.answer(question, scope.doc_name)
+            with metering.stage(Stage.RETRIEVING.value, "Read the retrieved pages"):
+                if scope.collection:
+                    return self._qa.answer_collection(question, scope.collection)
+                if scope.doc_name:
+                    return self._qa.answer(question, scope.doc_name)
         except Exception as exc:  # noqa: BLE001 - tier 1 failing is a reason to escalate
             logger.warning("fast path failed for %r: %s", question[:60], exc)
             return None
@@ -352,7 +516,9 @@ class AnalystAgent:
         on_stage: Optional[StageCallback],
         located: dict,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ):
+        stop = token_or_never(cancel)
         if not self._settings.agent_validate_answers:
             return _served("validation disabled")
         if scope.corpus is None:
@@ -364,16 +530,18 @@ class AnalystAgent:
         tracing.emit(
             on_trace, tracing.agent_status("checker", tracing.AgentStatus.RUNNING)
         )
-        validation = self._checker().check(
-            question=question,
-            answer=fast.answer,
-            doc_name=fast.doc_name,
-            page=fast.page,
-            corpus=scope.corpus,
-            page_label=fast.location_label or "",
-            evidence_snippet=fast.evidence_snippet,
-            on_trace=on_trace,
-        )
+        with metering.stage(Stage.VALIDATING.value, "Checked the answer"):
+            validation = self._checker().check(
+                question=question,
+                answer=fast.answer,
+                doc_name=fast.doc_name,
+                page=fast.page,
+                corpus=scope.corpus,
+                page_label=fast.location_label or "",
+                evidence_snippet=fast.evidence_snippet,
+                on_trace=on_trace,
+                cancel=stop,
+            )
         _report_verdict(on_trace, validation)
         return validation
 
@@ -387,23 +555,82 @@ class AnalystAgent:
         fast: Optional[QAAnswer],
         located: dict,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
+        plan: Optional[Plan] = None,
     ) -> AnswerPart:
-        """Tier 3: every page read, adjudicated, then deterministically verified."""
+        """Tier 3: every page in scope read, adjudicated, then verified."""
+        stop = token_or_never(cancel)
         corpus = scope.corpus
         assert corpus is not None  # guarded by the caller
+
+        relay = (
+            (lambda event: _emit(on_stage, _relocate_event(event, located)))
+            if on_stage
+            else None
+        )
+        scope_used = list(plan.documents) if (plan and plan.documents) else []
 
         try:
             result = self._deep().search(
                 question=question,
                 corpus=corpus,
                 context=context,
-                on_stage=(
-                    (lambda event: _emit(on_stage, _relocate_event(event, located)))
-                    if on_stage
-                    else None
-                ),
+                on_stage=relay,
                 on_trace=on_trace,
+                cancel=stop,
+                only=scope_used or None,
             )
+
+            # The scope was a hypothesis. If the documents the planner chose held
+            # nothing, read the ones it skipped before giving up -- a wrong guess
+            # should cost time, not the answer. Only worth doing when something
+            # was actually skipped.
+            if (
+                not result.found
+                and scope_used
+                and self._settings.planner_widen_on_empty
+                and corpus.scoped_documents(excluding=scope_used)
+            ):
+                logger.info(
+                    "widening past the planner's scope for %r: %s held nothing",
+                    question[:60],
+                    ", ".join(scope_used),
+                )
+                _emit(
+                    on_stage,
+                    StageEvent(
+                        Stage.ESCALATING,
+                        "nothing in the chosen documents — widening the search",
+                        **located,
+                    ),
+                )
+                tracing.emit(
+                    on_trace,
+                    tracing.thought(
+                        "planner",
+                        "the documents I chose held nothing; reading the rest",
+                    ),
+                )
+                widened = self._deep().search(
+                    question=question,
+                    corpus=corpus,
+                    context=context,
+                    on_stage=relay,
+                    on_trace=on_trace,
+                    cancel=stop,
+                    excluding=scope_used,
+                )
+                # Carry the cost of both passes: the reader should see what the
+                # question actually took, not what the second half of it took.
+                widened.pages_read += result.pages_read
+                widened.shards_run += result.shards_run
+                result = widened
+        except Cancelled:
+            # Not a failed search. The clause below turns failures into
+            # abstentions, and an abstention says the filing does not answer the
+            # question -- which nobody established, because nobody finished
+            # looking.
+            raise
         except Exception as exc:  # noqa: BLE001 - a failed deep search is an abstention
             logger.exception("deep search failed for %r", question[:60])
             return _abstained(question, fast, f"{escalation}; deep search failed: {exc}")
@@ -452,7 +679,7 @@ class AnalystAgent:
         # many. Measured on the practice key, those are what the deep path gets
         # wrong, and there is no tier after this one, so a doubt abstains.
         _emit(on_stage, StageEvent(Stage.VALIDATING, "checking the answer", **located))
-        validation = self._validate_deep(question, result, verdict, scope, on_trace)
+        validation = self._validate_deep(question, result, verdict, scope, on_trace, stop)
         if not validation.serves:
             logger.info(
                 "deep answer withheld for %r: %s", question[:60], validation.reason
@@ -483,6 +710,7 @@ class AnalystAgent:
         verdict,
         scope: Scope,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ):
         """
         Check a deep answer's meaning against the page it was cited to.
@@ -507,6 +735,7 @@ class AnalystAgent:
             computation=result.computation,
             inputs=result.inputs,
             on_trace=on_trace,
+            cancel=token_or_never(cancel),
         )
         _report_verdict(on_trace, validation)
         return validation
@@ -561,7 +790,7 @@ class AnalystAgent:
         self,
         message: str,
         scope: Scope,
-        intent: Intent,
+        plan: Plan,
         parts: Sequence[AnswerPart],
     ) -> AgentAnswer:
         found_parts = [part for part in parts if part.found]
@@ -577,7 +806,7 @@ class AnalystAgent:
             answer=answer,
             found=bool(found_parts),
             mode=AnswerMode.DEEP if deep_used else AnswerMode.FAST,
-            intent=intent,
+            intent=_intent_of(plan.kind),
             doc_name=(primary.doc_name if primary else (scope.doc_name or scope.name)),
             collection=scope.collection,
             searched_documents=len(scope.documents),
@@ -690,6 +919,22 @@ def _quote_locator(corpus: DocumentCorpus):
         return (ref.doc_name, ref.page_index) if ref else None
 
     return locate
+
+
+def _intent_of(kind: PlanKind) -> Intent:
+    """
+    The plan's kind as the wire's `intent`.
+
+    The API has reported three intents since before the planner existed, and
+    `corpus_meta` is a fourth. It maps onto `capability` because that is what it
+    is from a caller's point of view -- a question about the assistant's holdings,
+    answered without citing a document.
+    """
+    if kind is PlanKind.SMALLTALK:
+        return Intent.SMALLTALK
+    if kind in (PlanKind.CAPABILITY, PlanKind.CORPUS_META):
+        return Intent.CAPABILITY
+    return Intent.DOCUMENT_QUESTION
 
 
 def _locator(part: int, part_total: int) -> dict:

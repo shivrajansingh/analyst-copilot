@@ -435,7 +435,7 @@ def test_chat_stream_reports_progress_then_the_answer(client):
     answer = events[-1][1]
     assert answer["found"] is True
     assert answer["evidence"]["page"] == 59
-    assert [stage["stage"] for _, stage in events if _ == "stage"][0] == "routing"
+    assert [stage["stage"] for _, stage in events if _ == "stage"][0] == "planning"
 
 
 def test_chat_stream_reports_an_error_as_an_event_not_a_broken_stream(client):
@@ -491,9 +491,17 @@ def test_chat_stream_reports_the_activity_under_each_milestone(client):
 
     kinds = {trace["kind"] for trace in traces}
     assert kinds == {"agent", "thought", "tool"}
-    assert [t["status"] for t in traces if t["kind"] == "agent"] == ["running", "empty"]
     assert [t["tool"] for t in traces if t["kind"] == "tool"] == ["search_document"]
-    assert all(trace["agent"] == "reader 1" for trace in traces)
+
+    # The planner reports first, then the reader. Both are named, so a client can
+    # show who is working rather than one undifferentiated feed.
+    agents = [t["agent"] for t in traces if t["kind"] == "agent"]
+    assert agents[:2] == ["planner", "planner"]
+    assert "reader 1" in agents
+    reader_statuses = [
+        t["status"] for t in traces if t["kind"] == "agent" and t["agent"] == "reader 1"
+    ]
+    assert reader_statuses == ["running", "empty"]
     # Traces come before the answer, which is still the last event.
     assert [name for name, _ in events][-1] == "answer"
 

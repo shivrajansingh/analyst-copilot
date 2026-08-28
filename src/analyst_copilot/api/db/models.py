@@ -106,6 +106,17 @@ class Message(Base):
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     retrieval: Mapped[list | None] = mapped_column(JsonType, nullable=True)
 
+    # What the answer cost, queryable without unwrapping `result`.
+    #
+    # Money is stored in integer micro-dollars rather than a float: a thread's
+    # cost is a sum over dozens of rows whose interesting digits sit at the
+    # fifth decimal place, and that is precisely where a float drifts. Null
+    # means no rate was configured for the model, which is not the same fact as
+    # zero -- a locally hosted model genuinely costs nothing.
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_micro_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # The full ChatResponse as served, so the UI re-renders history verbatim.
     result: Mapped[dict | None] = mapped_column(JsonType, nullable=True)
 

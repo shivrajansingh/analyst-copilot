@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
 
+from analyst_copilot.agent.cancellation import CancelToken, Cancelled, token_or_never
 from analyst_copilot.agent.corpus import DocumentCorpus
 from analyst_copilot.agent.models import EvidenceInput, Finding, Stage, StageEvent
 from analyst_copilot.agent.prompts import (
@@ -42,6 +44,7 @@ from analyst_copilot.agent.prompts import (
 from analyst_copilot.agent.reader import ShardReader, _as_page_index
 from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.runtime import AgentRuntime
+from analyst_copilot import usage as metering
 from analyst_copilot.agent.tools import (
     SUBMIT_ANSWER,
     CalculateTool,
@@ -77,6 +80,8 @@ class DeepResult:
     shards_run: int = 0
     pages_read: int = 0
     error: str = ""
+    #: Which documents this search actually read.
+    documents_read: List[str] = field(default_factory=list)
 
     @property
     def candidates(self) -> List[Finding]:
@@ -123,9 +128,23 @@ class DeepSearchOrchestrator:
         context: str = "",
         on_stage: Optional[StageCallback] = None,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
+        only: Optional[Sequence[str]] = None,
+        excluding: Optional[Sequence[str]] = None,
     ) -> DeepResult:
-        pages = corpus.prewarm()
-        shards = corpus.shards(self._pages_per_shard)
+        """
+        Read the documents in scope and adjudicate what was found.
+
+        `only` is the planner's scope; `excluding` is its complement, used to
+        widen a scoped search that came back empty. Neither may make the search
+        read nothing: an `only` list matching no document is ignored.
+        """
+        stop = token_or_never(cancel)
+        stop.raise_if_cancelled()
+        corpus.prewarm()
+        shards = corpus.shards(self._pages_per_shard, only=only, excluding=excluding)
+        searched = corpus.scoped_documents(only=only, excluding=excluding)
+        pages = sum(len(shard.pages) for shard in shards)
         if self._max_shards and len(shards) > self._max_shards:
             # A bound exists so one enormous filing cannot run unbounded, but
             # dropping shards silently would report complete coverage of a
@@ -149,17 +168,27 @@ class DeepSearchOrchestrator:
             on_stage,
             StageEvent(
                 stage=Stage.DEEP_SEARCH,
-                detail=f"reading {pages} pages with {len(shards)} readers",
+                detail=(
+                    f"reading {pages} pages with {len(shards)} readers"
+                    + (
+                        f" across {len(searched)} documents"
+                        if len(searched) > 1
+                        else (f" of {searched[0]}" if searched else "")
+                    )
+                ),
                 done=0,
                 total=len(shards),
             ),
         )
 
-        findings = self._fan_out(question, corpus, shards, context, on_stage, on_trace)
+        findings = self._fan_out(
+            question, corpus, shards, context, on_stage, on_trace, stop
+        )
         result = DeepResult(
             findings=findings,
             shards_run=len(shards),
             pages_read=pages,
+            documents_read=list(searched),
         )
 
         contributions = result.contributions
@@ -177,7 +206,7 @@ class DeepSearchOrchestrator:
             ),
         )
 
-        self._synthesize(question, corpus, result, context, on_trace)
+        self._synthesize(question, corpus, result, context, on_trace, stop)
         return result
 
     # -- fan-out ------------------------------------------------------------ #
@@ -189,7 +218,9 @@ class DeepSearchOrchestrator:
         context: str,
         on_stage: Optional[StageCallback],
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> List[Finding]:
+        stop = token_or_never(cancel)
         reader = ShardReader(
             self._chat,
             corpus,
@@ -199,7 +230,10 @@ class DeepSearchOrchestrator:
         findings: List[Finding] = []
         completed = 0
 
-        with ThreadPoolExecutor(
+        with metering.stage(
+            Stage.DEEP_SEARCH.value,
+            f"Read all {corpus.page_count} pages · {len(shards)} agents",
+        ), ThreadPoolExecutor(
             max_workers=min(self._max_concurrency, len(shards)),
             thread_name_prefix="reader",
         ) as pool:
@@ -209,19 +243,44 @@ class DeepSearchOrchestrator:
                 tracing.emit(
                     on_trace, tracing.agent_status(label, tracing.AgentStatus.RUNNING)
                 )
+                # `copy_context().run(...)` rather than a bare submit: a
+                # ThreadPoolExecutor worker starts with an empty context, so
+                # without this the thirty-one readers -- most of what a deep
+                # run costs -- would record their tokens into no meter at all
+                # and the reported total would be quietly, hugely wrong.
+                context_for_reader = copy_context()
                 futures[
                     pool.submit(
+                        context_for_reader.run,
                         reader.read,
                         question,
                         shard,
                         context,
                         tracing.scoped(on_trace, label),
+                        stop,
                     )
                 ] = shard
             for future in as_completed(futures):
                 shard = futures[future]
+                if stop.cancelled:
+                    # The cheap half of a stop. Most of a fan-out is queued at
+                    # any moment -- 23 of 31 shards with the default
+                    # concurrency -- and a queued shard costs nothing to drop
+                    # because it has not called anything yet. The readers
+                    # already running raise at their own next checkpoint; the
+                    # pool's exit waits for them, which bounds the cost of a
+                    # stop at one in-flight call per running reader.
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise Cancelled()
                 try:
                     finding = future.result()
+                except Cancelled:
+                    # A reader that was stopped never looked at its pages, so it
+                    # has no finding -- not even an empty one. Ending the whole
+                    # fan-out here is the point: anything else adjudicates over
+                    # a document that was only partly read and calls it complete.
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
                 except Exception as exc:  # noqa: BLE001 - one reader must not end the search
                     logger.warning("reader %s raised: %s", shard.index, exc)
                     finding = Finding(
@@ -258,7 +317,10 @@ class DeepSearchOrchestrator:
         result: DeepResult,
         context: str,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> None:
+        stop = token_or_never(cancel)
+        stop.raise_if_cancelled()
         contributions = result.contributions
         if not contributions:
             result.found = False
@@ -315,19 +377,21 @@ class DeepSearchOrchestrator:
         tracing.emit(
             on_trace, tracing.agent_status("synthesis", tracing.AgentStatus.RUNNING)
         )
-        run = runtime.run(
-            system=SYNTHESIS_SYSTEM,
-            user=build_synthesis_prompt(
-                question=question,
-                findings_report=format_findings(ranked) or NO_FINDINGS_REPORT,
-                documents=corpus.available_documents(),
-                pages_read=result.pages_read,
-                context=context,
-            ),
-            registry=registry,
-            terminal_tools=(SUBMIT_ANSWER,),
-            on_trace=tracing.scoped(on_trace, "synthesis"),
-        )
+        with metering.stage(Stage.SYNTHESIZING.value, "Composed the answer"):
+            run = runtime.run(
+                system=SYNTHESIS_SYSTEM,
+                user=build_synthesis_prompt(
+                    question=question,
+                    findings_report=format_findings(ranked) or NO_FINDINGS_REPORT,
+                    documents=corpus.available_documents(),
+                    pages_read=result.pages_read,
+                    context=context,
+                ),
+                registry=registry,
+                terminal_tools=(SUBMIT_ANSWER,),
+                on_trace=tracing.scoped(on_trace, "synthesis"),
+                cancel=stop,
+            )
 
         if run.error or not run.reported:
             # Synthesis failed, but the readers' work is still good. Fall back to

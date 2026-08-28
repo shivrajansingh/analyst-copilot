@@ -1,21 +1,40 @@
 # Embeddings
 
-**Module:** `analyst_copilot.embeddings`
+**Code:** [`embeddings/`](../src/analyst_copilot/embeddings/)
 
-One client implements the OpenAI embeddings API. Ollama is supported as `{host}/v1` + `POST /v1/embeddings`. There is no separate `/api/embed` client.
+One client, talking to any OpenAI-compatible `/v1/embeddings` endpoint. That
+covers OpenAI, OpenRouter, a local Ollama at `{host}/v1`, and most others.
 
-## Types
+```mermaid
+flowchart LR
+    T[("page texts<br/>or one question")] --> B["batch them, 32 at a time"]
+    B --> API["POST /v1/embeddings"]
+    API --> V([vectors])
+```
 
-- `EmbeddingClient` (`base.py`): `embed_texts`, `embed_query`, `model_name`, `dimensions`
-- `OpenAICompatibleEmbeddingClient` (`openai.py`): official `openai` SDK, batched requests
-- `get_embedding_client()`: factory
+## Parts
 
-## Behavior
+| Thing | Job |
+|---|---|
+| `EmbeddingClient` (`base.py`) | The contract: `embed_texts`, `embed_query`, `model_name`, `dimensions` |
+| `OpenAICompatibleEmbeddingClient` (`openai.py`) | The real one, using the official SDK |
+| `get_embedding_client()` | Builds one from settings |
 
-- Base URL and model come from `Settings.resolved_*`.
-- Batch size default 32.
-- Vectors are returned as `list[list[float]]`.
-- Dimensions are inferred from the first response.
+## How it behaves
+
+- URL, key and model come from settings. See [configuration](02-configuration.md).
+- Requests are batched, 32 texts at a time.
+- Vector size is read from the first response, not configured.
+- 120 second timeout, 2 retries.
+
+## Two things worth knowing
+
+**The chat model is not used here.** Embeddings and chat are separate models with
+separate URLs and separate keys.
+
+**Only part of each page is embedded.** Pages are cut to
+`retrieval_max_chars_per_page` (2,500) first. That limit causes real problems and
+they are measured in [vector retrieval](06-vector-retrieval.md).
 
 ## Demo
 
@@ -23,6 +42,5 @@ One client implements the OpenAI embeddings API. Ollama is supported as `{host}/
 PYTHONPATH=src python scripts/examples/embedding_example.py
 ```
 
-This parses `3M_2018_10K.htm`, embeds a subset of pages (cash-flow region), and ranks by cosine similarity against a capex query.
-
-Chat (`OPENAI_MODEL=hy3`) is **not** used here. Embedding model and chat model are separate.
+Parses a filing, embeds the pages around the cash flow statement, and ranks them
+against a capex question.

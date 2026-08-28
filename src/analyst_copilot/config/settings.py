@@ -49,6 +49,34 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = ""
 
+    # What a token costs, in USD per million tokens.
+    #
+    # Deliberately unset by default and deliberately not guessed. This service
+    # talks to an OpenAI-compatible gateway, and a gateway can put any model
+    # behind any name at any margin -- so a rate nobody configured is reported
+    # as "no price", never as a number. Tokens are still counted and shown.
+    # A rate of 0 is a legitimate setting for a locally hosted model.
+    chat_price_input: float = 0.0
+    chat_price_output: float = 0.0
+    #: Rate for input the provider served from its own cache. Falls back to the
+    #: full input rate when unset, which is the conservative reading.
+    chat_price_cached_input: float = 0.0
+
+    # Peak pricing, for providers that charge more during their busy hours.
+    #
+    # Optional. Set these and a window and the rates above become the *off-peak*
+    # tier; leave them and the price is flat. This exists because a provider
+    # that doubles its rate for seven hours a day cannot be described by one
+    # number, and reporting one of the two around the clock would be
+    # confidently wrong for most of a working day in some timezone.
+    chat_price_peak_input: float = 0.0
+    chat_price_peak_output: float = 0.0
+    chat_price_peak_cached_input: float = 0.0
+    #: Half-open UTC hour windows, e.g. "01-04,06-10". Empty means never peak.
+    chat_price_peak_hours_utc: str = ""
+
+    embedding_price_input: float = 0.0
+
     # Legacy aliases (used when EMBEDDING_* vars are not set)
     ollama_url: str = "http://localhost:11434"
     ollama_embedding_model: str = "bge-m3"
@@ -104,6 +132,28 @@ class Settings(BaseSettings):
     agent_max_parts: int = 4
     # Prior turns shown to the harness, so "and the year before?" resolves.
     agent_history_turns: int = 6
+
+    # Planner. One decision before any work happens: is this a greeting, a
+    # question about the document set, or a question that needs the documents
+    # read -- and if so, which documents could hold the answer. It replaces a
+    # router that decided the same thing from 125 hardcoded words and got it
+    # wrong on phrasings nobody had thought of.
+    planner_enabled: bool = True
+    # Narrow the deep search to the documents the planner chose. Off means every
+    # document is read on every escalated question, which is what happened before
+    # the planner existed: correct, and three times the work on a three-year set.
+    planner_scope_documents: bool = True
+    # The careful policy. Narrow only when the question names a fiscal year, so
+    # the scope can be checked against the document cards instead of trusted.
+    # Off is bolder: the planner may narrow on its own judgement.
+    planner_scope_requires_year: bool = True
+    # Below this the planner's document choice is discarded and everything is
+    # searched. Narrowing is the only decision here that can lose an answer.
+    planner_min_confidence: float = 0.8
+    # Re-run a scoped deep search over the documents it skipped, when the scoped
+    # search found nothing. This is what makes a wrong scope cost time instead of
+    # the answer, and turning it off removes the safety net entirely.
+    planner_widen_on_empty: bool = True
 
     # How far a citation may be moved to land on the page that actually carries
     # the evidence. Two readings of the same document -- filed HTML vs the

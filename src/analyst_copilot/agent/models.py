@@ -37,7 +37,7 @@ class AnswerMode(str, Enum):
 class Stage(str, Enum):
     """Progress milestones, streamed to the caller as they happen."""
 
-    ROUTING = "routing"
+    PLANNING = "planning"
     DECOMPOSING = "decomposing"
     RETRIEVING = "retrieving"
     READING = "reading"
