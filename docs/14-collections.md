@@ -1,24 +1,34 @@
-# Filings — many documents, one question
+# Filing sets — many documents, one question
 
-**Modules:** `analyst_copilot.collections`
-**Entry points:** `CollectionStore` · `CollectionIndexer` · `CollectionSearcher`
+**Code:** [`collections/`](../src/analyst_copilot/collections/)
 
-An analyst's question is rarely about one file. *"How did operating margin move
-over three years"* spans three annual reports, and making them pick one first is
-asking them to answer half the question themselves.
+A **filing set** is a named group of documents searched together.
 
-A **filing** is that grouping made explicit: a named set of documents that are
-indexed together and searched together. Retrieval spans every indexed document
-in it; the answer still cites exactly one.
+Why: an analyst's question is rarely about one file. "How did margin move over
+three years" spans three annual reports. So a question is asked of the *set*, and
+retrieval ranks pages from every document in it against each other.
 
-> **Terminology.** The product calls these *filings* and their members
-> *documents*. The code calls them **collections** — `CollectionStore`,
-> `/api/v1/collections` — because "filing" already means a single 10-K
-> everywhere else in this codebase, and reusing it for the container would make
-> `filing.filings` a sentence someone has to decode. The boundary is the API
-> client; past it, the UI says filing throughout.
+**The answer still cites exactly one document.** Widening the search widens where
+we may *look*, not what we may *claim* — a citation is only checkable against the
+document it names.
 
----
+```mermaid
+flowchart TD
+    Q([your question]) --> P[planner picks which<br/>documents could hold it]
+    P --> S["search all chosen documents<br/>scores pooled BEFORE normalising"]
+    S --> T[top 5 pages, from any document]
+    T --> A([answer citing ONE document<br/>and one page])
+```
+
+The code calls these *collections* because "filing" already means a single 10-K
+everywhere else in the pipeline. The UI calls them filings, because that is what
+an analyst calls them.
+
+> **Note on scoring across documents.** Scores are pooled *before* being squashed
+> to 0–1. Squash each document separately and every document's best page becomes
+> 1.0, so the merge is ranked by nothing. Meaning scores are comparable across
+> documents by construction; word scores are not, which is why they carry a weight
+> of 0.1. See [finding the right page](07-hybrid-retrieval.md#3-searching-several-documents-at-once).
 
 ## Layout
 

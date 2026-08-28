@@ -80,6 +80,8 @@ class DeepResult:
     shards_run: int = 0
     pages_read: int = 0
     error: str = ""
+    #: Which documents this search actually read.
+    documents_read: List[str] = field(default_factory=list)
 
     @property
     def candidates(self) -> List[Finding]:
@@ -127,11 +129,22 @@ class DeepSearchOrchestrator:
         on_stage: Optional[StageCallback] = None,
         on_trace: Optional[tracing.TraceCallback] = None,
         cancel: Optional[CancelToken] = None,
+        only: Optional[Sequence[str]] = None,
+        excluding: Optional[Sequence[str]] = None,
     ) -> DeepResult:
+        """
+        Read the documents in scope and adjudicate what was found.
+
+        `only` is the planner's scope; `excluding` is its complement, used to
+        widen a scoped search that came back empty. Neither may make the search
+        read nothing: an `only` list matching no document is ignored.
+        """
         stop = token_or_never(cancel)
         stop.raise_if_cancelled()
-        pages = corpus.prewarm()
-        shards = corpus.shards(self._pages_per_shard)
+        corpus.prewarm()
+        shards = corpus.shards(self._pages_per_shard, only=only, excluding=excluding)
+        searched = corpus.scoped_documents(only=only, excluding=excluding)
+        pages = sum(len(shard.pages) for shard in shards)
         if self._max_shards and len(shards) > self._max_shards:
             # A bound exists so one enormous filing cannot run unbounded, but
             # dropping shards silently would report complete coverage of a
@@ -155,7 +168,14 @@ class DeepSearchOrchestrator:
             on_stage,
             StageEvent(
                 stage=Stage.DEEP_SEARCH,
-                detail=f"reading {pages} pages with {len(shards)} readers",
+                detail=(
+                    f"reading {pages} pages with {len(shards)} readers"
+                    + (
+                        f" across {len(searched)} documents"
+                        if len(searched) > 1
+                        else (f" of {searched[0]}" if searched else "")
+                    )
+                ),
                 done=0,
                 total=len(shards),
             ),
@@ -168,6 +188,7 @@ class DeepSearchOrchestrator:
             findings=findings,
             shards_run=len(shards),
             pages_read=pages,
+            documents_read=list(searched),
         )
 
         contributions = result.contributions

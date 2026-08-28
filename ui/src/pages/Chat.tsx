@@ -5,7 +5,7 @@ import type { ChatResponse, StageEvent, TraceEvent } from '@/api/types'
 import { ApiError } from '@/api/client'
 import { chatApi } from '@/api/endpoints/chat'
 import { useSearchableCollections } from '@/hooks/useCollections'
-import { useConversationStore } from '@/stores/conversations.store'
+import { DRAFT_RUN, useConversationStore } from '@/stores/conversations.store'
 import { useUiStore } from '@/stores/ui.store'
 import { AnswerCard } from '@/components/chat/AnswerCard'
 import { ChatBubble } from '@/components/chat/ChatBubble'
@@ -53,6 +53,17 @@ function questionBefore(messages: { id: string; role: string; content: string }[
   return ''
 }
 
+/**
+ * How often live traces are written to the store.
+ *
+ * A deep search emits several hundred steps in a couple of minutes, in bursts.
+ * Writing every one re-renders every consumer of the store; writing eight times
+ * a second is indistinguishable to a reader watching a collapsed panel. The
+ * complete set is attached to the message when the answer arrives, so nothing is
+ * lost by coalescing on the way.
+ */
+const TRACE_FLUSH_MS = 120
+
 export function ChatPage() {
   const { conversationId } = useParams()
   const [searchParams] = useSearchParams()
@@ -63,33 +74,38 @@ export function ChatPage() {
   const conversation = conversationId ? store.conversations[conversationId] : undefined
 
   const [draftFiling, setDraftFiling] = useState<string | null>(searchParams.get('filing'))
-  const [busy, setBusy] = useState(false)
-  // The stop was asked for and the server is still unwinding the calls already
-  // in flight. A second or so, and worth naming rather than pretending.
-  const [stopping, setStopping] = useState(false)
   // A question put back in the composer by "Ask again". Most stops are followed
   // by a reworded version of the same question, not a repeat of it.
   const [draft, setDraft] = useState<string | null>(null)
-  // The live stage from the streaming endpoint. Reading a whole filing takes a
-  // minute, and a minute of silence reads as a hang.
-  const [stage, setStage] = useState<StageEvent | null>(null)
-  // The activity underneath it. Bounded: a 31-reader run emits hundreds of
-  // steps and the panel only ever shows the tail.
-  const [traces, setTraces] = useState<TraceEvent[]>([])
   // The answer whose text should animate in — the one that just arrived, never
   // a message re-rendered from history.
   const [revealId, setRevealId] = useState<string | null>(null)
   const [threadError, setThreadError] = useState<string | null>(null)
   const [activeEvidence, setActiveEvidence] = useState<ChatResponse | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+
+  // Progress belongs to the thread, not to this view. A question runs for
+  // seconds on the fast path and minutes on the deep one, and switching threads
+  // used to carry "searching the filing" along with it — an idle thread claiming
+  // to be working. Reading it by key means each thread shows only its own run,
+  // and a thread that is genuinely working still shows its progress when you
+  // come back to it.
+  //
+  // Stopping is part of the same state for the same reason: ask thread A to stop
+  // and thread B must not say "stopping", and two runs at once must not share
+  // one abort controller.
+  const runKey = conversationId ?? DRAFT_RUN
+  const { busy, stage, traces, stopping } = store.runFor(runKey)
   const evidenceOpen = useUiStore((state) => state.evidenceOpen)
   const setEvidenceOpen = useUiStore((state) => state.setEvidenceOpen)
 
   const bottomRef = useRef<HTMLDivElement>(null)
-  // The run in flight, and how to stop it. A ref rather than state: stopping is
-  // an imperative act on a live connection, and nothing renders from it.
-  const abortRef = useRef<AbortController | null>(null)
-  const runIdRef = useRef<string | null>(null)
+  // Which thread is on screen *now*. The callbacks in `ask` close over the
+  // thread as it was when the question was asked, so they cannot answer that
+  // question themselves — and an answer that lands while another thread is open
+  // must not touch that thread's evidence rail.
+  const viewingRef = useRef(runKey)
+  viewingRef.current = runKey
   // A conversation is pinned to the filing it was started in, so every
   // citation in the thread stays checkable against the same set of documents.
   const filingName = conversation?.collection ?? draftFiling
@@ -105,6 +121,18 @@ export function ChatPage() {
     store.refresh(conversationId)
   }, [conversationId, conversation, store])
 
+  // Everything below is *about the thread being viewed*, so none of it may
+  // survive a change of thread: a pinned citation from one filing shown beside
+  // another's messages is the same bug as a stray loading indicator, and a
+  // thread's error message is not the next thread's problem.
+  useEffect(() => {
+    setActiveEvidence(null)
+    setThreadError(null)
+    setRevealId(null)
+    setSheetOpen(false)
+    setDraft(null)
+  }, [conversationId])
+
   // Show the most recent result unless the reader has pinned an older one.
   const shownEvidence = useMemo(() => {
     if (activeEvidence) return activeEvidence
@@ -118,9 +146,14 @@ export function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages.length, busy])
 
-  // Leaving the page is a stop. Without this the reader goes away and the
+  // Leaving the chat screen is a stop. Without it the reader goes away and the
   // fan-out carries on reading a 10-K for nobody.
-  useEffect(() => () => abortRef.current?.abort(), [])
+  //
+  // Switching between threads does not come through here — the route parameter
+  // changes and this component stays mounted — which is what lets a thread keep
+  // working while you read another one. This fires on leaving for Filings,
+  // Settings or sign-out, and it stops every run, not just the visible one.
+  useEffect(() => () => useConversationStore.getState().abortAllRuns(), [])
 
   const ask = async (question: string) => {
     if (!filingName) return
@@ -153,31 +186,33 @@ export function ChatPage() {
       })
     }
 
-    setBusy(true)
-    setStopping(false)
-    setStage(null)
-    setTraces([])
+    // Filed under the thread the answer will land in, which is why the thread is
+    // created before this point: the run must never be attributed to the view.
+    const runId = target?.id ?? DRAFT_RUN
+    const controller = new AbortController()
+    store.startRun(runId)
+    store.updateRun(runId, { controller })
     const collected: TraceEvent[] = []
+    let flushedAt = 0
     // A holder, not a plain `let`: the assignment happens inside a callback, and
     // TypeScript's flow analysis would otherwise narrow the read back to null.
+    // Read back on cancellation, where a store read would be a stale closure.
     const latest: { stage: StageEvent | null } = { stage: null }
-    const controller = new AbortController()
-    abortRef.current = controller
-    runIdRef.current = null
     try {
       const outcome = await chatApi.streamFiling(filingName, question, {
         conversationId: target?.id,
         signal: controller.signal,
-        onRun: (run) => {
-          runIdRef.current = run.run_id
-        },
+        onRun: (run) => store.updateRun(runId, { serverRunId: run.run_id }),
         onStage: (event) => {
           latest.stage = event
-          setStage(event)
+          store.updateRun(runId, { stage: event })
         },
         onTrace: (trace) => {
           collected.push(trace)
-          setTraces(collected.slice(-MAX_TRACES))
+          const now = performance.now()
+          if (now - flushedAt < TRACE_FLUSH_MS) return
+          flushedAt = now
+          store.updateRun(runId, { traces: collected.slice(-MAX_TRACES) })
         },
       })
 
@@ -211,7 +246,10 @@ export function ChatPage() {
 
       const result = outcome.answer
       const answerId = `m_${Date.now()}_a`
-      setRevealId(answerId)
+      const stillViewing = viewingRef.current === runId
+      // Animate the text in only if the reader is here to see it. Revealing a
+      // message they are not looking at just means it animates when they arrive.
+      if (stillViewing) setRevealId(answerId)
       if (target) {
         store.appendLocal(target.id, {
           id: answerId,
@@ -226,8 +264,9 @@ export function ChatPage() {
         await store.refresh(target.id)
       }
       // A conversational reply cites nothing, so it must not replace the
-      // evidence a previous answer put in the rail.
-      if (result.mode !== 'conversational') setActiveEvidence(result)
+      // evidence a previous answer put in the rail — and neither may an answer
+      // that arrived for a thread the reader has since navigated away from.
+      if (stillViewing && result.mode !== 'conversational') setActiveEvidence(result)
     } catch (caught) {
       const message =
         caught instanceof ApiError ? caught.message : 'The request could not be completed.'
@@ -239,16 +278,15 @@ export function ChatPage() {
           created_at: new Date().toISOString(),
           error: message,
         })
-      } else {
+      } else if (viewingRef.current === runId) {
+        // No thread to record it against, so it goes on screen — but only if
+        // this is still the screen the question was asked from.
         setThreadError(message)
       }
     } finally {
-      abortRef.current = null
-      runIdRef.current = null
-      setBusy(false)
-      setStopping(false)
-      setStage(null)
-      setTraces([])
+      // Clears the stage, the traces, the controller and the stopping flag with
+      // it: they were all one run's state.
+      store.endRun(runId)
     }
   }
 
@@ -265,15 +303,16 @@ export function ChatPage() {
    */
   const stop = () => {
     if (!busy || stopping) return
-    setStopping(true)
-    const runId = runIdRef.current
-    const controller = abortRef.current
-    if (!runId) {
+    // Read from the thread's own run, so stopping the thread on screen cannot
+    // reach into another thread that is also working.
+    const { serverRunId, controller } = store.runFor(runKey)
+    store.updateRun(runKey, { stopping: true })
+    if (!serverRunId) {
       // Stopped before the run was even named. Nothing to call, so hang up.
       controller?.abort()
       return
     }
-    void chatApi.cancelRun(runId)
+    void chatApi.cancelRun(serverRunId)
     // Give the server the moment it needs to answer with `cancelled` and say
     // where it stopped. If it does not, the abort ends the wait anyway. The
     // controller is captured, not read later: by then it may belong to the next

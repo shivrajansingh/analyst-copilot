@@ -6,40 +6,64 @@ Question-answering over company filings, in whatever format the analyst has them
 - **Implementation docs:** [docs/README.md](docs/README.md)
 - **Challenge spec:** [AGENTS.md](AGENTS.md)
 
-## What works today
+## What it does
 
-Parse a document — **PDF, HTML, Word, Excel, CSV or Markdown** — into Markdown
-pages, then answer questions about it at the cheapest tier that can prove
-itself:
+You give it company filings. You ask a question in plain English. It answers with
+the **document and page** the answer came from — or it tells you the filing does
+not contain it.
 
-| | | |
-|---|---|---|
-| **Tier 1** | BM25 + embeddings → hybrid search → chat LLM → deterministic verifier | ~3s |
-| **Tier 2** | a second reader checks that answer against the **whole** cited page | ~15s |
-| **Tier 3** | every page of the filing read by parallel agents, then adjudicated | ~60s |
+It never shows a figure it cannot prove. That is the whole point: a wrong number
+in a valuation is worse than no number.
 
-Tier 1 can only answer from the five pages retrieval chose, and on the practice
-key that set holds the gold page **58%** of the time — so tier 3 exists to
-remove a ceiling no prompt can lift. It runs only when the cheap tiers cannot
-produce an answer that survives checking. Details:
-[docs/16-agent-harness.md](docs/16-agent-harness.md).
+```mermaid
+flowchart TD
+    M([your message]) --> P["PLANNER<br/>what does this need?"]
+    P -->|"hi / what can you do?"| C([a friendly reply])
+    P -->|"how many documents?"| F([answered from the file list])
+    P -->|a real question| T1
 
-Either way the answer is attached to a page whose own text supports it, or the
-system returns **not found in this filing**. `scripts/eval/score.py` grades
-answers against the practice key on the challenge rubric.
+    T1["TIER 1 · ~3 seconds<br/>search the indexes, ask the model,<br/>check the figures are on the page"]
+    T1 --> T2["TIER 2 · ~15 seconds<br/>a second reader checks the answer<br/>against the whole page"]
+    T2 -->|correct| OUT([answer + page])
+    T2 -->|doubted| T3
+    T1 -->|nothing found| T3
 
-**It also talks.** "Hi" gets a reply, not a search of a 10-K — every message is
-classified before anything is retrieved, and a greeting is answered as a
-greeting with nothing cited.
+    T3["TIER 3 · 1-5 minutes<br/>read every page of the chosen files<br/>with parallel agents"]
+    T3 --> V{does the page<br/>support it?}
+    V -->|yes| OUT
+    V -->|no| NO([not found in this filing])
+```
 
-**Computed answers are provable.** An operating margin appears nowhere in a
-filing; only the two figures behind it do. A derived figure is verified through
-its **inputs** — each traced to the page it was read from, with the arithmetic
-re-run exactly — so the 43 numerical-reasoning questions in the practice set are
-no longer unanswerable by construction.
+We stop at the first tier that can prove its answer. Most questions never get
+past tier 2.
 
-There is an HTTP API (add filing, status, chat, streaming chat) and a React UI
-in [`ui/`](ui/).
+### Why three tiers
+
+Tier 1 only ever sees 5 pages. On the practice questions those 5 pages contain
+the right page **58% of the time**. The other 42% are not hard questions — they
+are impossible ones, because you cannot cite a page you were never shown.
+
+Tier 3 removes that limit by reading everything. But reading more finds more
+*wrong* answers too, so tier 2 sits in between to catch them.
+
+### Things it does that are worth knowing
+
+**It talks.** Type "hi" and you get a reply, not a search of a 10-K. Every message
+is classified before anything is searched.
+
+**It only reads the files it needs.** Ask about FY2018 in a set of three years and
+it searches one document, not three. If that turns out to be wrong, it widens the
+search rather than losing your answer.
+
+**It can prove arithmetic.** An operating margin appears nowhere in a filing —
+only the two figures behind it do. So a computed answer is checked by tracing
+every input to its page and re-running the sum in Python. That unblocked 43
+practice questions that were guaranteed refusals before.
+
+**It shows its work.** Progress streams as it happens: which agent is running,
+what it said it was looking for, which tool it called. Collapsed by default.
+
+Full detail: **[what changed and what it measured](docs/17-enhancements.md)**.
 
 ### Supported formats
 
@@ -78,14 +102,16 @@ large-documents-llm-system/
 │   │   └── markdown_store.py #   storage/markdown/{doc}/page-001.md
 │   ├── embeddings/           # OpenAI-compatible /v1/embeddings
 │   ├── llm/                  # OpenAI-compatible /v1/chat/completions
-│   ├── retrieval/            # BM25, vector, hybrid
-│   ├── agent/                # The harness: route, validate, deep-search
-│   │   ├── corpus.py         #   pages on disk, sharded ≤10 per reader
-│   │   ├── tools/            #   list/search/read/read_lines/calculate
+│   ├── retrieval/            # BM25, embeddings, blending
+│   ├── agent/                # planner + the three tiers
+│   │   ├── planner.py        #   what does this message need?
+│   │   ├── cards.py          #   one line per document, from its filename
+│   │   ├── corpus.py         #   pages on disk, split ≤10 per reader
+│   │   ├── tools/            #   list, search, read, read_lines, calculate
 │   │   ├── reader.py         #   one agent, one slice, strict brief
-│   │   ├── orchestrator.py   #   fan out, then adjudicate
+│   │   ├── orchestrator.py   #   fan out, then choose
 │   │   ├── verification.py   #   proves a computed figure via its inputs
-│   │   └── pipeline.py       #   the three tiers
+│   │   └── pipeline.py       #   the tiers, and the escapes
 │   └── services/
 │       ├── indexing/
 │       └── qa/               # Retrieve → LLM → verify / abstain
@@ -102,12 +128,14 @@ cp .env.example .env          # then fill in the provider keys
 docker compose -f docker-compose.yml up --build
 ```
 
-The app is on <http://localhost:3000>; the API is also published on
-<http://127.0.0.1:8000> for `curl` and `/docs`. `docker compose up` without
-`-f` instead brings up hot-reloading dev servers (uvicorn `--reload` and Vite
-with HMR on 5173). `filings/` and `storage/` are bind-mounted, so uploads and
-indices live on the host and survive the containers. Details:
-[docs/15-docker.md](docs/15-docker.md).
+The app is on <http://localhost:4006>. The API is **not** published to your
+machine — the browser reaches it through nginx, same-origin. `docker compose up` without
+`-f` instead brings up hot-reloading development servers. `filings/` and
+`storage/` are mounted from your machine, so uploads and indexes survive the
+containers.
+
+⚠️ A `restart` reuses the existing images. After changing code use
+`up --build -d`. Details: [docs/15-docker.md](docs/15-docker.md).
 
 ## The corpus is not in the repository
 
@@ -292,32 +320,40 @@ PYTHONPATH=src pytest
 
 ## How a question is answered
 
-1. **Route.** Greeting, question about the assistant, or question about the
-   document? Common greetings match literally and cost no model call. On any
-   doubt the message is treated as a document question — answering a real
-   question from nothing is the worse error.
-2. **Split.** A message asking several things becomes several questions, each
-   retrieved, answered and **cited separately**. Composition is done in code, so
-   no figure is rewritten after it was verified.
-3. **Tier 1.** Hybrid retrieve the top pages, prompt the chat model for JSON
-   (`answer`, `page`, `evidence_snippet`, or `not_found`), then verify
-   **evidence first**: score every retrieved page for whether it supports the
-   answer — figures traced by significant digits, so a filing printed in
-   millions still supports an answer given in billions — and cite the page that
-   actually carries the evidence. The page the model named is a hint.
-4. **Tier 2.** A reader that did not write the answer sees the question, the
-   answer and the *whole* cited page, and rules `correct` / `incorrect` /
-   `insufficient`. This catches what digit-tracing cannot: the right figure for
-   the wrong fiscal year, a segment instead of the consolidated total, half of a
-   compound question.
-5. **Tier 3.** If tier 1 abstained or tier 2 doubted it, the filing is sharded
-   into slices of ten pages, one reader agent per slice, eight at a time. Readers
-   may read **only** their own pages — so together they have read the whole
-   document and no two can report the same page. A synthesis agent then
-   adjudicates the candidates on authority, not on which figure looks nicest.
-6. **Verify, always.** The deterministic verifier is the last word on both
-   answering tiers. Agents propose; it disposes.
-7. **Otherwise abstain:** **not found in this filing**.
+**1. Plan it.** One decision first: is this small talk, a question about the file
+list, or a real question? And if real, which files could hold the answer? It also
+rewrites follow-ups so they stand alone — "and the year before?" becomes a full
+question.
+
+Every branch has a way out, so a wrong guess costs seconds, not your answer. A
+chat reply can say "this needs the document". A scoped search that finds nothing
+widens. [Details](docs/19-planner-agent.md).
+
+**2. Split it.** A message asking several things becomes several questions, each
+searched and **cited separately**. The parts are joined in code, not by a model —
+a model asked to merge answers rewrites their figures.
+
+**3. Tier 1.** Search the indexes, take the top 5 pages, ask the model for JSON,
+then verify **evidence first**: score every retrieved page for whether it supports
+the answer, and cite the page that actually does. The page the model named is a
+hint. Figures are compared by significant digits, so a filing printed in millions
+supports an answer given in billions.
+
+**4. Tier 2.** A reader that did not write the answer sees the question, the
+answer, and the *whole* cited page. It catches what digit-checking cannot: the
+right figure for the wrong year, a segment instead of the total, half of a
+two-part question.
+
+**5. Tier 3.** If tier 1 found nothing or tier 2 doubted it, the chosen files are
+split into slices of ten pages, one reader agent per slice, eight at a time.
+Readers may read **only** their own pages, so together they cover everything and
+no two can claim the same page. A senior agent then picks which candidate to
+cite.
+
+**6. Verify, always.** The verifier is the last word on both answering tiers.
+Agents propose. It decides.
+
+**7. Otherwise refuse:** *not found in this filing.*
 
 ### Flexible location, strict evidence
 

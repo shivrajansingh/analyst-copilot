@@ -1,26 +1,33 @@
 # Running the stack in Docker
 
-Four containers: the app pair plus Postgres and a one-shot migration.
+Four services, one command.
 
-```text
-   browser ──:3000──▶  ui (nginx)  ──/api/*──▶  api (uvicorn)
-                                                    │
-                                          ./filings    ./storage
-                                        (bind mounts on the host)
-                                                    │
-                              migrate (alembic) ◀── db (postgres) ──▶ pgdata
+```mermaid
+flowchart LR
+    B([browser]) -->|":4006"| UI[ui · nginx]
+    UI -->|"/api/*"| API[api · uvicorn]
+    API --> ST[("filings/ storage/<br/>mounted from your machine")]
+    API --> DB[(db · postgres)]
+    MG[migrate] -.->|"runs once,<br/>then exits"| DB
+    MG -.->|api waits for it| API
 ```
 
 ```bash
-cp .env.example .env          # then fill in the provider keys
+cp .env.example .env      # then fill in your provider keys
 docker compose -f docker-compose.yml up --build
 ```
 
-The app is on <http://localhost:3000>. The API is also published on
-<http://127.0.0.1:8000> for `curl` and `/docs`; the UI does not use it, reaching
-the API over the compose network instead.
+The app is at **<http://localhost:4006>**.
 
----
+The API is **not** published to your machine. The browser reaches it through
+nginx, same-origin, so nothing needs CORS and no API host is baked into the
+JavaScript bundle.
+
+`docker compose up` **without** `-f` also loads `docker-compose.override.yml`,
+which swaps both app services for hot-reloading development servers.
+
+> ⚠️ **A `restart` is not enough after changing code.** It reuses the existing
+> images. Use `up --build -d` — and `up --build -d api` if only Python changed.
 
 ## The database
 

@@ -346,7 +346,7 @@ class AnswerPartResponse(BaseModel):
 class StageUsageResponse(BaseModel):
     """What one stage of the pipeline spent."""
 
-    stage: str = Field(description="Stage key: routing, retrieving, deep_search, embedding…")
+    stage: str = Field(description="Stage key: planning, retrieving, deep_search, embedding…")
     label: str = Field(
         description="Prose for the analyst, written where the counts are known — "
         "\"Read all 118 pages · 31 agents\"."

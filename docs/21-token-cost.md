@@ -95,7 +95,7 @@ Three facts about this service ruled out the obvious designs:
   request at once, so a counter on the client would bill two analysts together.
 - **The pipeline runs off the event loop in a worker thread**, and the deep path
   fans out into a pool of its own.
-- **The call sites are scattered** — router, splitter, fast path, checker,
+- **The call sites are scattered** — planner, splitter, fast path, checker,
   thirty-one readers, adjudicator, and the query embedding.
 
 So `UsageMeter` lives in a `ContextVar`, bound inside `AnalystAgent.answer`
@@ -103,8 +103,8 @@ rather than at the caller — the pipeline body runs in a thread whose context i
 not reliably the caller's. Each call site names its stage:
 
 ```python
-with metering.stage(Stage.ROUTING.value, "Understood the question"):
-    routing = self._intents().route(message, context)
+with metering.stage(Stage.PLANNING.value, "Understood the question"):
+    plan = self._decide(message, cards, context, on_trace)
 ```
 
 The label is prose, written where the counts are known: only the orchestrator
@@ -151,7 +151,7 @@ different facts, and only one of them should sum.
   "calls": 38, "cost_usd": 0.017909, "priced": true, "estimated": false,
   "models": ["deepseek-v4-flash", "qwen/qwen3-embedding-8b"],
   "stages": [
-    {"stage": "routing", "label": "Understood the question", "calls": 1,
+    {"stage": "planning", "label": "Understood the question", "calls": 1,
      "input_tokens": 412, "output_tokens": 18, "cost_usd": 0.000131},
     …
   ]

@@ -428,6 +428,7 @@ def test_the_pipeline_binds_the_meter_around_a_conversational_reply():
     """
     from analyst_copilot.agent import AnalystAgent
     from analyst_copilot.llm.base import ChatClient
+    from tests.offline_harness import StubPlanner
 
     class RecordingChat(ChatClient):
         """Stands in for the real client's own metering, which is tested above."""
@@ -440,7 +441,9 @@ def test_the_pipeline_binds_the_meter_around_a_conversational_reply():
             usage.record(usage.Usage(model="m", input_tokens=286, output_tokens=44))
             return "Hello. Ask me about a filing."
 
-    agent = AnalystAgent(qa_service=object(), chat_client=RecordingChat())
+    agent = AnalystAgent(
+        qa_service=object(), chat_client=RecordingChat(), planner=StubPlanner()
+    )
     meter = usage.UsageMeter(_book())
     answer = agent.answer("Hi", doc_name="anything", meter=meter)
 
@@ -456,6 +459,7 @@ def test_an_unmetered_answer_still_works():
     """Every script in `scripts/` calls the pipeline without a meter."""
     from analyst_copilot.agent import AnalystAgent
     from analyst_copilot.llm.base import ChatClient
+    from tests.offline_harness import StubPlanner
 
     class Chat(ChatClient):
         @property
@@ -466,7 +470,9 @@ def test_an_unmetered_answer_still_works():
             usage.record(usage.Usage(model="m", input_tokens=1, output_tokens=1))
             return "Hello."
 
-    agent = AnalystAgent(qa_service=object(), chat_client=Chat())
+    agent = AnalystAgent(
+        qa_service=object(), chat_client=Chat(), planner=StubPlanner()
+    )
     assert agent.answer("Hi", doc_name="anything").mode.value == "conversational"
 
 
