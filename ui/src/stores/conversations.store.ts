@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { CancelledEvent, ChatResponse, TraceEvent } from '@/api/types'
+import type { CancelledEvent, ChatResponse, StageEvent, TraceEvent } from '@/api/types'
 import { conversationsApi } from '@/api/endpoints/conversations'
 import { normalizeChatResponse } from '@/api/normalize'
 
@@ -53,6 +53,61 @@ export interface Conversation {
 }
 
 /**
+ * One thread's in-flight question.
+ *
+ * This lives on the thread rather than in the chat view, and that is the whole
+ * point. A question takes seconds on the fast path and minutes on the deep one,
+ * and an analyst will switch threads while it runs. Held as view state, the
+ * "searching the filing" indicator followed them — an idle thread claiming to be
+ * working, and no way to see the progress of the thread that actually was.
+ *
+ * Keyed by conversation id, so two threads can be searching at once and each
+ * shows only its own progress.
+ */
+export interface ThreadRun {
+  busy: boolean
+  stage: StageEvent | null
+  traces: TraceEvent[]
+  /** The stop was asked for and the server is still unwinding calls in flight. */
+  stopping: boolean
+  /**
+   * The server's id for this run, from the `run` event.
+   *
+   * Needed to cancel it. Null until the event arrives, which is why stopping
+   * before then hangs up instead of calling the endpoint.
+   */
+  serverRunId: string | null
+  /**
+   * How to hang up on this run.
+   *
+   * Lives here rather than in a ref for the same reason everything else in this
+   * type does: with one ref per view, starting a question in a second thread
+   * would overwrite the first thread's controller, and stopping either would
+   * stop the wrong one.
+   */
+  controller: AbortController | null
+}
+
+/**
+ * Where a run is filed when there is no thread to file it under.
+ *
+ * A question asked before a thread exists — the first message, or any question
+ * when no database is configured — still needs somewhere to report progress. The
+ * chat view reads this key exactly when it is showing no conversation, so the two
+ * agree without either knowing about the other.
+ */
+export const DRAFT_RUN = '__draft__'
+
+export const IDLE_RUN: ThreadRun = {
+  busy: false,
+  stage: null,
+  traces: [],
+  stopping: false,
+  serverRunId: null,
+  controller: null,
+}
+
+/**
  * Chat history, stored in Postgres through `/conversations`.
  *
  * The store keeps its shape from the localStorage era so components render the
@@ -76,12 +131,53 @@ interface ConversationState {
   appendLocal: (id: string, message: Message) => void
   rename: (id: string, title: string) => Promise<void>
   remove: (id: string) => Promise<void>
+
+  /** In-flight questions, by thread. See `ThreadRun`. */
+  runs: Record<string, ThreadRun>
+  /** Mark a thread as working, clearing any previous run's progress. */
+  startRun: (key: string) => void
+  /** Report progress on a thread's run. Ignored once the run has ended. */
+  updateRun: (key: string, patch: Partial<ThreadRun>) => void
+  /** The run finished, one way or another. */
+  endRun: (key: string) => void
+  /** Hang up on every run in flight. Used when the chat screen is left. */
+  abortAllRuns: () => void
+  /** A thread's run, or a stable idle value. Never undefined. */
+  runFor: (key: string | undefined) => ThreadRun
 }
 
 export const useConversationStore = create<ConversationState>()((set, get) => ({
   conversations: {},
   order: [],
   loaded: false,
+  runs: {},
+
+  startRun: (key) =>
+    set((state) => ({ runs: { ...state.runs, [key]: { ...IDLE_RUN, busy: true } } })),
+
+  updateRun: (key, patch) =>
+    set((state) => {
+      const current = state.runs[key]
+      // A late event from a run that already ended must not resurrect the
+      // indicator: the stream is cancelled on unmount, but a queued callback can
+      // still land after the `finally` block has run.
+      if (!current?.busy) return state
+      return { runs: { ...state.runs, [key]: { ...current, ...patch } } }
+    }),
+
+  endRun: (key) =>
+    set((state) => {
+      const { [key]: _finished, ...rest } = state.runs
+      return { runs: rest }
+    }),
+
+  abortAllRuns: () => {
+    // Every controller, not one: several threads can be working at once, and
+    // leaving the screen abandons all of them.
+    for (const run of Object.values(get().runs)) run.controller?.abort()
+  },
+
+  runFor: (key) => (key ? get().runs[key] ?? IDLE_RUN : IDLE_RUN),
 
   load: async () => {
     const { conversations } = await conversationsApi.list()

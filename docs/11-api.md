@@ -1,9 +1,18 @@
 # HTTP API
 
-A thin FastAPI shell over the pipeline. It imports `AnalystAgent`,
-`QuestionAnsweringService` and `HybridFilingIndexer` and adds **no** retrieval,
-prompting or verification logic of its own — every decision about an answer
-still happens in `analyst_copilot.agent` and `analyst_copilot.services`.
+A thin FastAPI shell over the pipeline. It holds no logic of its own — every
+decision about an answer happens in `analyst_copilot.agent` and
+`analyst_copilot.services`.
+
+```mermaid
+flowchart LR
+    C([client]) -->|POST /chat| API[the API]
+    C -->|POST /chat/stream| API
+    C -->|POST /filings| API
+    API --> AG["AnalystAgent<br/>planner + 3 tiers"]
+    API --> JOBS["background indexing<br/>queued → parsing → embedding → ready"]
+    API --> DB[("Postgres<br/>chat history")]
+```
 
 ```bash
 python scripts/serve_api.py            # http://127.0.0.1:8000, docs at /docs
@@ -94,7 +103,8 @@ against the document it names.
 ### Check `mode` before `found`
 
 `/chat` answers messages, not only questions, so the response says which tier
-produced it. See [Agent harness](16-agent-harness.md).
+produced it. See [the harness](16-agent-harness.md) and
+[the planner](20-planner-agent.md).
 
 | `mode` | Meaning | `evidence` |
 |---|---|---|
@@ -114,7 +124,7 @@ three, because a greeting is a message to answer rather than a malformed request
 
 | Field | Meaning |
 |---|---|
-| `intent` | `smalltalk`, `capability` or `document_question` |
+| `intent` | `smalltalk`, `capability` or `document_question`. A question about the *file list* reports `capability`, because from a caller's side that is what it is — answered without citing a document |
 | `citations[]` | Every place the answer can be checked, one per answered part. `evidence` repeats the first. |
 | `parts[]` | Set only when the question was split into several questions, each with its own answer and citation |
 | `computation` | The arithmetic behind a derived figure, re-evaluated during verification |
@@ -143,7 +153,7 @@ event: run
 data: {"run_id":"run_9f2c1ab34d5e"}
 
 event: stage
-data: {"stage":"routing","detail":"reading the message"}
+data: {"stage":"planning","detail":"deciding what this needs"}
 
 event: stage
 data: {"stage":"deep_search","detail":"reader 4: nothing here","done":4,"total":13}
@@ -156,6 +166,14 @@ data: {"doc_name":"3M_2022_10K","found":true,"mode":"deep", ...}
 |---|---|---|
 | `run` | `{run_id}` | Exactly one, always **first**, before any work. Names the run so it can be stopped. |
 | `stage` | `{stage, detail, done?, total?, part?, part_total?}` | Milestones. A handful per answer. `done`/`total` only while readers are fanning out. |
+
+Stage names, in the order they usually appear:
+
+`planning` · `decomposing` · `retrieving` · `validating` · `escalating` ·
+`deep_search` · `synthesizing` · `verifying` · `done`
+
+Most answers never see `escalating` or anything after it.
+
 | `trace` | `{kind, agent?, text?, tool?, status?}` | The activity underneath. **Several hundred per answer.** |
 | `answer` | The full `ChatResponse` | Exactly one, and always last |
 | `error` | `{code, message}` | Instead of `answer`. The HTTP status is still `200` — the stream had already begun. |
@@ -187,8 +205,8 @@ event: trace
 data: {"kind":"agent","agent":"reader 7","status":"found"}
 ```
 
-`agent` is `reader N`, `synthesis` or `checker`. Thought text is truncated to 240
-characters before it leaves the process — this is a progress feed, not a
+`agent` is `planner`, `reader N`, `synthesis` or `checker`. Thought text is cut to
+240 characters before it leaves the process — this is a progress feed, not a
 transcript.
 
 **Tool arguments and tool results are never sent.** They are large, they are the

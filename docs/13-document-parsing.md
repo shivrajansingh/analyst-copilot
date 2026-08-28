@@ -1,37 +1,35 @@
-# Document parsing — any format in, Markdown pages out
+# Reading any document
 
-**Modules:** `analyst_copilot.parsing`
-**Entry point:** `parse_document(path)` — [`registry.py`](../src/analyst_copilot/parsing/registry.py)
+**Code:** [`parsing/`](../src/analyst_copilot/parsing/)
 
-An analyst has a filing. It might be the EDGAR HTML, the PDF the company
-published, a Word draft, or a spreadsheet of segment data pulled out of one of
-those. The system should not care. This layer is where it stops caring.
+Six formats go in. Markdown pages come out. Everything after this point —
+searching, the model, the verifier, the reader agents — reads one shape and never
+learns where the document came from.
 
----
-
-## The shape
-
-```text
-upload
-   │
-   ├─ 1. detect      formats.py         extension, checked against magic bytes
-   │
-   ├─ 2. parse       parsers/*.py       one parser per format
-   │
-   ├─ 3. normalize   markdown.py        every format converges on Markdown
-   │
-   ├─ 4. segment                        page / sheet / table / section
-   │
-   ├─ 5. store       markdown_store.py  one .md file per segment + manifest
-   │
-   └─ 6. index                          BM25 + embeddings read the Markdown
+```mermaid
+flowchart TD
+    F([a file]) --> D{what is it?}
+    D -->|.pdf| P1[PDF parser]
+    D -->|.htm .html| P2[HTML parser]
+    D -->|.docx| P3[Word parser]
+    D -->|.xlsx| P4[Excel parser]
+    D -->|.csv .tsv| P5[CSV parser]
+    D -->|.md .txt| P6[text parser]
+    P1 --> M
+    P2 --> M
+    P3 --> M
+    P4 --> M
+    P5 --> M
+    P6 --> M
+    M["Markdown segments<br/>tables stay tables"]
+    M --> S[("storage/markdown/{doc}/page-001.md<br/>one file per page, plus a manifest")]
+    S --> IDX[indexes]
+    S --> AG[reader agents in tier 3]
 ```
 
-Everything above step 6 knows only `parse_document(path)`. Adding a format is
-registering a parser in [`registry.py`](../src/analyst_copilot/parsing/registry.py);
-no caller changes.
-
----
+The format is worked out from the extension, checked against the file's first
+bytes. A PDF saved as `.txt` is still read as a PDF. A `.docx` and a `.xlsx` are
+both ZIP files, so only the extension can tell those two apart.
 
 ## Formats
 
