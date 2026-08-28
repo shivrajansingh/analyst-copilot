@@ -113,10 +113,15 @@ export function ChatPage() {
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
+      // Set on the document, not the panel: the pointer spends the drag over
+      // the chat column to the left of the handle, and that is the text a drag
+      // would otherwise select.
+      document.body.style.userSelect = ''
       setResizingEvidence(false)
     }
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
+    document.body.style.userSelect = 'none'
     setResizingEvidence(true)
   }
 
@@ -478,13 +483,21 @@ export function ChatPage() {
 
       {evidenceOpen ? (
         <>
+          {/* `hidden lg:block`, like the panel it drags: below `lg` the evidence
+              lives in the Sheet, and a drag handle for a panel that is not on
+              screen is a one-pixel strip that does nothing. */}
           <div
-            className="w-1 cursor-col-resize bg-transparent hover:bg-accent/30"
-            onMouseDown={startResize}
+            role="separator"
+            aria-orientation="vertical"
             aria-label="Resize evidence panel"
+            onMouseDown={startResize}
+            className={cn(
+              'hidden w-1 shrink-0 cursor-col-resize lg:block',
+              resizingEvidence ? 'bg-accent/40' : 'bg-transparent hover:bg-accent/30',
+            )}
           />
           <aside
-            className="shrink-0 border-l border-line bg-surface lg:block overflow-hidden"
+            className="hidden shrink-0 overflow-hidden border-l border-line bg-surface lg:block"
             style={{ width: `${evidenceWidth}px`, minWidth: 200, maxWidth: 600 }}
           >
             <div className="scrollbar-slim h-full overflow-y-auto">
