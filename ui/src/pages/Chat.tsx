@@ -99,6 +99,32 @@ export function ChatPage() {
   const evidenceOpen = useUiStore((state) => state.evidenceOpen)
   const setEvidenceOpen = useUiStore((state) => state.setEvidenceOpen)
 
+  const [evidenceWidth, setEvidenceWidth] = useState<number>(320)
+  const [resizingEvidence, setResizingEvidence] = useState(false)
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = evidenceWidth
+    const onMouseMove = (move: MouseEvent) => {
+      const newWidth = startWidth + (startX - move.clientX)
+      setEvidenceWidth(Math.max(200, Math.min(600, newWidth)))
+    }
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      // Set on the document, not the panel: the pointer spends the drag over
+      // the chat column to the left of the handle, and that is the text a drag
+      // would otherwise select.
+      document.body.style.userSelect = ''
+      setResizingEvidence(false)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    document.body.style.userSelect = 'none'
+    setResizingEvidence(true)
+  }
+
   const bottomRef = useRef<HTMLDivElement>(null)
   // Which thread is on screen *now*. The callbacks in `ask` close over the
   // thread as it was when the question was asked, so they cannot answer that
@@ -455,19 +481,36 @@ export function ChatPage() {
         </div>
       </section>
 
-      <aside
-        className={cn(
-          'hidden shrink-0 border-l border-line bg-surface transition-[width] duration-200 lg:block',
-          evidenceOpen ? 'w-80 xl:w-96' : 'w-0 overflow-hidden border-l-0',
-        )}
-      >
-        <div className="scrollbar-slim h-full overflow-y-auto">
-          <h2 className="border-b border-line px-4 py-3 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
-            Evidence
-          </h2>
-          <EvidencePanel result={shownEvidence} />
-        </div>
-      </aside>
+      {evidenceOpen ? (
+        <>
+          {/* `hidden lg:block`, like the panel it drags: below `lg` the evidence
+              lives in the Sheet, and a drag handle for a panel that is not on
+              screen is a one-pixel strip that does nothing. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize evidence panel"
+            onMouseDown={startResize}
+            className={cn(
+              'hidden w-1 shrink-0 cursor-col-resize lg:block',
+              resizingEvidence ? 'bg-accent/40' : 'bg-transparent hover:bg-accent/30',
+            )}
+          />
+          <aside
+            className="hidden shrink-0 overflow-hidden border-l border-line bg-surface lg:block"
+            style={{ width: `${evidenceWidth}px`, minWidth: 200, maxWidth: 600 }}
+          >
+            <div className="scrollbar-slim h-full overflow-y-auto">
+              <h2 className="border-b border-line px-4 py-3 text-2xs font-semibold uppercase tracking-wider text-ink-muted">
+                Evidence
+              </h2>
+              <EvidencePanel result={shownEvidence} />
+            </div>
+          </aside>
+        </>
+      ) : (
+        <aside className="hidden shrink-0 w-0 overflow-hidden border-l-0 lg:block" />
+      )}
 
       <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)} title="Evidence">
         <EvidencePanel result={shownEvidence} />
