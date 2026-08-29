@@ -514,6 +514,14 @@ class ChatResponse(BaseModel):
     shards_run: int = Field(
         default=0, description="Reader agents used by the deep path. 0 when it did not run."
     )
+    recalled: bool = Field(
+        default=False,
+        description=(
+            "True when the answer was restated from earlier in this thread rather "
+            "than read again. The evidence is the original answer's citation, so "
+            "the page still proves the figure — but nothing was re-read."
+        ),
+    )
 
     @classmethod
     def from_agent(cls, answer: "AgentAnswer") -> "ChatResponse":
@@ -547,6 +555,7 @@ class ChatResponse(BaseModel):
             validation=answer.validation,
             pages_read=answer.pages_read,
             shards_run=answer.shards_run,
+            recalled=answer.recalled,
         )
 
     @classmethod

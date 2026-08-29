@@ -17,8 +17,8 @@ from analyst_copilot.agent.cards import (
     documents_covering,
     years_mentioned,
 )
-from analyst_copilot.agent.facts import corpus_facts
-from analyst_copilot.agent.planner import Plan, PlanKind, Planner
+from analyst_copilot.agent.facts import corpus_facts, thread_facts, thread_summary
+from analyst_copilot.agent.planner import Plan, PlanKind, Planner, PlanPayload
 from analyst_copilot.llm.base import ChatClient
 
 THREE_YEARS = ["3M_2018_10K", "3M_2022_10K", "3M_2023Q2_10Q"]
@@ -259,3 +259,153 @@ def test_no_model_at_all_becomes_a_document_question():
     plan = Planner(None).plan("hi")
     assert plan.kind is PlanKind.DOCUMENT
     assert plan.assumed
+
+
+# --- the pydantic contract -------------------------------------------------- #
+# `PlanPayload` is where the system prompt's promises are checked. These pin the
+# rejections, because a validator that quietly repairs off-spec output makes the
+# prompt untunable -- you never learn which edit fixed the model.
+def test_confidence_outside_zero_to_one_is_rejected():
+    plan, _ = _plan({"kind": "document", "question": "q", "confidence": 1.4})
+    assert plan.assumed
+    assert "confidence" in plan.reason
+
+
+def test_a_non_numeric_confidence_is_rejected():
+    plan, _ = _plan({"kind": "document", "question": "q", "confidence": "high"})
+    assert plan.assumed
+
+
+def test_documents_as_a_bare_string_is_rejected_not_split_into_letters():
+    plan, _ = _plan(
+        {
+            "kind": "document",
+            "question": "What was FY2018 revenue?",
+            "documents": "3M_2018_10K",
+            "confidence": 0.99,
+        }
+    )
+    assert plan.assumed
+    assert plan.documents == []
+
+
+def test_blank_document_names_are_dropped():
+    payload = PlanPayload.model_validate(
+        {"kind": "document", "question": "q", "documents": ["3M_2018_10K", "  ", ""]}
+    )
+    assert payload.documents == ["3M_2018_10K"]
+
+
+def test_an_omitted_question_defaults_to_the_message():
+    plan, _ = _plan({"kind": "smalltalk", "confidence": 0.9}, message="hi")
+    assert plan.kind is PlanKind.SMALLTALK
+    assert plan.question == "hi"
+    assert not plan.assumed
+
+
+def test_a_blank_question_defaults_to_the_message_rather_than_failing():
+    plan, _ = _plan({"kind": "capability", "question": "   "}, message="what can you do?")
+    assert plan.kind is PlanKind.CAPABILITY
+    assert plan.question == "what can you do?"
+
+
+def test_extra_keys_are_ignored():
+    payload = PlanPayload.model_validate(
+        {"kind": "document", "question": "q", "tokens_used": 41, "documents": []}
+    )
+    assert payload.kind is PlanKind.DOCUMENT
+
+
+# --- the inspection seam ---------------------------------------------------- #
+def test_explain_keeps_the_prompt_and_the_raw_reply():
+    chat = PlanningChat({"kind": "smalltalk", "question": "hi", "confidence": 0.95})
+    attempt = Planner(chat).explain("hi", cards_for(THREE_YEARS))
+    assert attempt.validated
+    assert attempt.plan.kind is PlanKind.SMALLTALK
+    assert "hi" in attempt.prompt
+    assert "3M_2018_10K" in attempt.prompt
+    assert attempt.raw
+    assert attempt.error is None
+
+
+def test_explain_reports_why_output_was_rejected():
+    chat = PlanningChat({"kind": "vibes", "question": "q"})
+    attempt = Planner(chat).explain("What was revenue?", cards_for(THREE_YEARS))
+    assert not attempt.validated
+    assert attempt.payload is None
+    assert "kind" in (attempt.error or "")
+    assert attempt.raw
+    assert attempt.plan.assumed
+
+
+def test_explain_keeps_the_scope_the_model_proposed():
+    chat = PlanningChat(
+        {
+            "kind": "document",
+            "question": "What was FY2018 revenue?",
+            "documents": ["3M_2018_10K"],
+            "confidence": 0.99,
+        }
+    )
+    attempt = Planner(chat).explain("What was FY2018 revenue?", cards_for(THREE_YEARS))
+    assert attempt.payload is not None
+    assert attempt.payload.documents == ["3M_2018_10K"]
+
+
+def test_plan_and_explain_agree():
+    payload = {"kind": "document", "question": "What was FY2018 revenue?", "confidence": 0.9}
+    cards = cards_for(THREE_YEARS)
+    assert Planner(PlanningChat(payload)).plan("q", cards) == Planner(
+        PlanningChat(payload)
+    ).explain("q", cards).plan
+
+
+# --- facts about the conversation ------------------------------------------- #
+# Computed in Python for the same reason `corpus_facts` is: there is no verifier
+# on the conversational path, so a count the model works out is unchecked.
+def test_an_empty_thread_reports_that_nothing_was_asked():
+    facts = thread_facts([])
+    assert "0" in facts
+    assert "No question has been asked yet" in facts
+
+
+def test_the_first_and_most_recent_questions_are_named():
+    facts = thread_facts(
+        [
+            {"role": "user", "content": "What was FY2018 capex?"},
+            {"role": "assistant", "content": "$1,577 million."},
+            {"role": "user", "content": "and margins?"},
+        ]
+    )
+    assert "Questions asked so far in this conversation: 2" in facts
+    assert 'The first question was: "What was FY2018 capex?"' in facts
+    assert 'The most recent question before this one was: "and margins?"' in facts
+
+
+def test_a_single_question_is_both_first_and_most_recent():
+    facts = thread_facts([{"role": "user", "content": "What was FY2018 capex?"}])
+    assert "both the first and the most recent" in facts
+
+
+def test_assistant_turns_are_not_counted_as_questions():
+    facts = thread_facts(
+        [
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "Hi there."},
+        ]
+    )
+    assert "Questions asked so far in this conversation: 1" in facts
+
+
+def test_the_summary_answers_without_a_model():
+    assert "not asked anything yet" in thread_summary([]).lower()
+    summary = thread_summary(
+        [
+            {"role": "user", "content": "What was FY2018 capex?"},
+            {"role": "user", "content": "and margins?"},
+        ]
+    )
+    assert "asked 2 questions" in summary
+    assert '"What was FY2018 capex?"' in summary
+    assert '"and margins?"' in summary

@@ -1,4 +1,4 @@
-import { Layers, ShieldCheck } from 'lucide-react'
+import { History, Layers, ShieldCheck } from 'lucide-react'
 import type { ChatResponse, TraceEvent } from '@/api/types'
 import { useRevealedText } from '@/hooks/useRevealedText'
 import { SubagentSummary } from './SubagentSummary'
@@ -53,6 +53,16 @@ export function AnswerCard({
           Answer
         </span>
         <span className="flex items-center gap-2">
+          {result.recalled && (
+            <Tooltip
+              label="You asked this earlier in this conversation. This repeats that answer and its citation — the filing was not read again."
+            >
+              <span className="inline-flex items-center gap-1 rounded-full bg-surface-sunken px-2 py-0.5 text-2xs font-medium uppercase tracking-wide text-ink-muted">
+                <History className="h-3 w-3" />
+                from earlier
+              </span>
+            </Tooltip>
+          )}
           {result.mode === 'deep' && (
             <Tooltip
               label={`The first pass could not prove an answer, so all ${result.pages_read} pages were read by ${result.shards_run} agents.`}

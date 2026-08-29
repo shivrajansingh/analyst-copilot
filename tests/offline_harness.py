@@ -15,11 +15,16 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from analyst_copilot.agent import AnalystAgent
-from analyst_copilot.agent.conversation import ConversationResponder
+from analyst_copilot.agent.conversation import (
+    FALLBACK_REPLY,
+    ConversationReply,
+    ConversationResponder,
+)
 from analyst_copilot.agent.decompose import QuestionDecomposer
 from analyst_copilot.agent.models import Stage, StageEvent
 from analyst_copilot.agent.orchestrator import DeepResult
 from analyst_copilot.agent.planner import Plan, PlanKind
+from analyst_copilot.agent.recall import HistoryTurn, Recollection
 from analyst_copilot.agent.trace import AgentStatus, agent_status, thought, tool_call
 from analyst_copilot.agent.validator import Validation, Verdict
 
@@ -57,6 +62,44 @@ class StubPlanner:
             confidence=1.0,
             reason="stubbed",
         )
+
+
+class StubResponder:
+    """
+    Replies without a model.
+
+    Echoes the facts it was handed, so a test can assert that the right ones were
+    computed; or asks for the document, so the escape hatch can be exercised.
+    """
+
+    def __init__(self, needs_document: bool = False, text: Optional[str] = None) -> None:
+        self.needs_document = needs_document
+        self.text = text
+        self.facts = []
+
+    def reply(self, message, collection=None, documents=(), history="", facts="") -> ConversationReply:
+        self.facts.append(facts)
+        if self.needs_document:
+            return ConversationReply(needs_document=True)
+        return ConversationReply(text=self.text if self.text is not None else (facts or FALLBACK_REPLY))
+
+
+class StubRecaller:
+    """
+    Recalls without a model.
+
+    Declines by default, which is what makes every existing test behave as it
+    did before recall existed: a `history` plan that finds nothing falls through
+    to the ordinary search.
+    """
+
+    def __init__(self, recollection: Optional[Recollection] = None) -> None:
+        self.recollection = recollection or Recollection(reason="stubbed: nothing recalled")
+        self.calls = []
+
+    def recall(self, message, history) -> Recollection:
+        self.calls.append((message, list(history or [])))
+        return self.recollection
 
 
 class StubValidator:
@@ -123,6 +166,8 @@ def build_agent(
     collections: Optional[StubCollections] = None,
     ready_documents: Sequence[str] = (),
     planner: Optional[StubPlanner] = None,
+    recaller: Optional[StubRecaller] = None,
+    responder=None,
 ) -> AnalystAgent:
     """The real harness with every model call stubbed out."""
     return AnalystAgent(
@@ -133,5 +178,6 @@ def build_agent(
         decomposer=QuestionDecomposer(None),
         validator=validator or StubValidator(),
         orchestrator=deep or StubDeepSearch(),
-        responder=ConversationResponder(None),
+        responder=responder or ConversationResponder(None),
+        recaller=recaller or StubRecaller(),
     )
