@@ -199,3 +199,29 @@ def test_long_figures_are_not_torn_into_unexplained_fragments(computation, input
 
     recorded = [EvidenceInput(f"input {i}", value) for i, value in enumerate(inputs)]
     assert _unexplained_literals(computation, recorded) == []
+
+
+def test_two_explanations_sharing_a_digit_are_not_treated_as_agreeing():
+    """
+    Measured: three wrong answers were re-confirmed because some figure inside
+    a paragraph matched some figure inside another paragraph. An explanation is
+    a claim about meaning, so it goes to judgement, not to digit comparison.
+    """
+    chat = _Chat(
+        [_reports(
+            "report_reading",
+            answered=True,
+            answer="Margin fell 0.3 points on respirator demand and rose 1.3 points on productivity",
+            reason="",
+        )],
+        prose=json.dumps({"same": False, "reason": "different driver named"}),
+    )
+    result = _check(chat, "Margin fell 1.7 points, driven by 0.3 of gross margin and one-off charges")
+    assert result.verdict is Verdict.INCORRECT
+    assert "different driver" in result.reason
+
+
+def test_a_leading_fiscal_year_is_not_the_claim():
+    """`FY2022 capex was 1,577` asserts 1,577; comparing 2022 passes anything."""
+    chat = _Chat([_reports("report_reading", answered=True, answer="FY2018 capex was 1,577", reason="")])
+    assert _check(chat, "FY2018 capital expenditure was 2,100").verdict is Verdict.INCORRECT

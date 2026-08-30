@@ -35,6 +35,7 @@ analyst.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Sequence
@@ -99,6 +100,44 @@ class Validation:
     @property
     def serves(self) -> bool:
         return self.verdict.serves
+
+
+# Words that dress a figure rather than assert anything of their own. An answer
+# built only from these plus a number is a figure; anything else is an argument,
+# and arguments are not compared by their digits.
+_UNIT_WORDS = frozenset(
+    """usd dollar dollars million millions billion billions thousand thousands
+    percent percentage percentage-point points bps times ratio approximately approx
+    about roughly around circa fy cy quarter year years the a an of in on at to
+    is was were are and or per share shares net total yes no""".split()
+)
+_MAX_CONTENT_WORDS = 2
+_WORD = re.compile(r"[A-Za-z]+")
+
+
+def _headline(text: str) -> Optional[float]:
+    """
+    The figure an answer asserts, or None when it is asserting prose.
+
+    None is the important half. It routes an explanation to a judgement instead
+    of to a digit comparison, and it is what stops "some number in common" from
+    reading as "the same answer".
+    """
+    content = [
+        word
+        for word in (match.group(0).lower() for match in _WORD.finditer(text))
+        if len(word) > 1 and word not in _UNIT_WORDS
+    ]
+    if len(content) > _MAX_CONTENT_WORDS:
+        return None
+
+    values = figures_in(text)
+    if not values:
+        return None
+    # A leading fiscal year is not the claim. "FY2022 capex was 1,577" asserts
+    # 1,577, and comparing 2022 instead would pass any answer about FY2022.
+    real = [v for v in values if not (float(v).is_integer() and 1900 <= v <= 2100)]
+    return (real or values)[0]
 
 
 class AnswerValidator:
@@ -236,12 +275,19 @@ class AnswerValidator:
         reading. Prose falls back to a model, which is the best available and is
         marked as such in the reason.
         """
-        mine = figures_in(independent)
-        theirs = figures_in(proposed)
+        mine, theirs = _headline(independent), _headline(proposed)
 
-        if mine and theirs:
-            if any(figures_agree(a, b) for a in theirs for b in mine):
-                return Validation(Verdict.CORRECT, f"read independently and agreed: {reason}".strip())
+        # Numerically only when both answers *are* figures. Comparing the
+        # numbers inside two paragraphs is worse than not comparing at all:
+        # "any figure in common" is nearly always true of two explanations of
+        # the same page, so three wrong answers were re-confirmed by a digit
+        # they happened to share. Prose is a question about meaning; it goes to
+        # the judgement below, where at least a different model is deciding.
+        if mine is not None and theirs is not None:
+            if figures_agree(theirs, mine):
+                return Validation(
+                    Verdict.CORRECT, f"read independently and agreed: {reason}".strip()
+                )
             return Validation(
                 Verdict.INCORRECT,
                 f"read independently and got {independent!r}, not {proposed[:120]!r}. {reason}".strip(),
