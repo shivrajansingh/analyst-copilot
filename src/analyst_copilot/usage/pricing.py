@@ -172,12 +172,17 @@ class PriceBook:
         chat_price: Optional[Rate] = None,
         embedding_model: str = "",
         embedding_price: Optional[Rate] = None,
+        validator_model: str = "",
+        validator_price: Optional[Rate] = None,
     ) -> None:
         self._configured: Dict[str, Rate] = {}
-        if chat_model and chat_price:
-            self._configured[chat_model.strip().lower()] = chat_price
-        if embedding_model and embedding_price:
-            self._configured[embedding_model.strip().lower()] = embedding_price
+        for model, rate in (
+            (chat_model, chat_price),
+            (embedding_model, embedding_price),
+            (validator_model, validator_price),
+        ):
+            if model and rate:
+                self._configured[model.strip().lower()] = rate
 
     def rate(self, model: str) -> Optional[Rate]:
         """The configured or published rate for a model, before the clock is applied."""
@@ -245,6 +250,22 @@ def from_settings(settings=None) -> PriceBook:
         chat_price=chat,
         embedding_model=settings.resolved_embedding_model,
         embedding_price=price(settings.embedding_price_input, 0.0, 0.0),
+        # Checking runs on its own model, so it bills on its own rate. Without
+        # this the second model is unpriced and an answer reports a cost
+        # covering only half of what it spent -- worse than reporting none.
+        # `getattr` because callers -- the tests among them -- hand this a
+        # stand-in carrying only the price fields it cares about, and a checker
+        # nobody configured must not turn that into an AttributeError.
+        validator_model=(
+            getattr(settings, "resolved_validator_model", "")
+            if getattr(settings, "validator_is_separate", False)
+            else ""
+        ),
+        validator_price=price(
+            getattr(settings, "validator_price_input", 0.0),
+            getattr(settings, "validator_price_output", 0.0),
+            getattr(settings, "validator_price_cached_input", 0.0),
+        ),
     )
 
 

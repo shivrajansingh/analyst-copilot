@@ -333,6 +333,98 @@ period, right entity, right line items), and is this the right operation to
 apply to them?"""
 
 
+BLIND_READER_SYSTEM = """You are reading one page of a company filing to answer one question.
+
+Answer it yourself, from what is printed here. You are not reviewing anybody's
+work — you have not been shown an answer, and there is nothing to agree with.
+
+Rules:
+
+1. **Period first.** The question names a period — "FY2022", "Q2 of FY2023",
+   "at year end". Find the column for that period before you read any figure.
+   A balance sheet prints three dates side by side and the wrong column is the
+   commonest way a right-looking figure is wrong.
+2. **Use the definition you were given.** If the question defines a metric
+   ("ROA is defined as: ..."), compute it that way and no other way. Your own
+   preferred formula is not the one being asked for.
+3. **Do the arithmetic with `calculate`**, never in your head.
+4. **Answer only from these pages.** If they do not carry what the question
+   asks — wrong statement, wrong period, figure not printed — say so by
+   reporting `answered: false`. That is a useful answer, not a failure.
+5. **Answer the form asked.** *Which* wants the items, not a count of them. A
+   yes/no question wants the conclusion its own figures support.
+
+Before any tool call, say in one short sentence what you are looking for.
+
+Finish by calling `report_reading` exactly once."""
+
+
+def build_blind_prompt(
+    question: str,
+    doc_name: str,
+    page_label: str,
+    page_text: str,
+    extra_pages: Sequence["object"] = (),
+    max_chars: int = 24000,
+) -> str:
+    """
+    The question and the page, with no proposed answer anywhere in it.
+
+    Withholding the answer is the entire point. A model shown a conclusion and
+    asked whether it is right will look for reasons to agree; a model asked to
+    do the work reaches its own figure, which can then be compared. Nothing here
+    may leak what the writer concluded.
+    """
+    body = page_text[:max_chars]
+    clipped = (
+        f"\n\n[...page truncated at {max_chars:,} of {len(page_text):,} characters. "
+        f"Use read_page with an offset to see the rest.]"
+        if len(page_text) > max_chars
+        else ""
+    )
+
+    extra = ""
+    for item in extra_pages:
+        label = getattr(item, "label", "") or "page"
+        text = (getattr(item, "text", "") or "")[:max_chars // 2]
+        if text:
+            extra += f"\n\nAlso available — {getattr(item, 'doc_name', doc_name)}, {label}:\n---\n{text}\n---"
+
+    return f"""Question:
+{question}
+
+{doc_name}, {page_label}:
+---
+{body}{clipped}
+---{extra}
+
+Answer the question from these pages, then call `report_reading`."""
+
+
+COMPARISON_SYSTEM = """Two analysts answered the same question from the same page. Decide whether
+they reached the same substantive conclusion.
+
+Wording, ordering, rounding, units stated differently and extra correct detail
+do not matter. What matters:
+
+- a different figure
+- a different period
+- a different direction (up vs down, yes vs no)
+- a list missing an item, or carrying one that does not belong
+- one of them answering only part of a question that asked several things
+
+Return JSON only: {"same": boolean, "reason": string}"""
+
+
+def build_comparison_prompt(question: str, proposed: str, independent: str) -> str:
+    return (
+        f"Question:\n{question}\n\n"
+        f"Answer A (proposed):\n{proposed}\n\n"
+        f"Answer B (read independently from the page):\n{independent}\n\n"
+        "Return JSON only."
+    )
+
+
 def build_validator_prompt(
     question: str,
     answer: str,

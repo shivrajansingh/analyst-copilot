@@ -25,4 +25,6 @@ def health(
         chat_model=pipeline.openai_model or "(unset)",
         embedding_model=pipeline.resolved_embedding_model,
         indexed_filings=len(filings.list_searchable()),
+        validator_model=pipeline.resolved_validator_model or "(unset)",
+        independent_validator=pipeline.validator_is_separate,
     )

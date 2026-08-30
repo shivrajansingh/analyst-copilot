@@ -38,7 +38,14 @@ from analyst_copilot.config.settings import get_settings
 from analyst_copilot.retrieval.models import ScoredPage
 from analyst_copilot.services.qa.models import LLMExtraction
 
-_NUMBER_PATTERN = re.compile(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?")
+# One number is one match, however long. The earlier pattern tried
+# `\d{1,3}(?:,\d{3})*` first, which on a comma-free integer matched only the
+# first three digits and then restarted: `177866` came back as `177` and `866`.
+# That tore every figure a filing prints in millions into fragments, and
+# `_unexplained_literals` then rejected the tail as a number nobody had cited --
+# refusing correct arithmetic. Leading `\d+` is greedy, so `1,577`, `177866`
+# and `9,497,578` each match whole.
+_NUMBER_PATTERN = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 
 
 class LocationMatch(str, Enum):

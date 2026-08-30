@@ -47,7 +47,14 @@ from analyst_copilot.services.qa.verifier import (
 # checks below can be unit-tested against strings.
 PageTextLookup = Callable[[str, int], Optional[str]]
 
-_NUMBER = re.compile(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?")
+# One number is one match, however long. The earlier pattern tried
+# `\d{1,3}(?:,\d{3})*` first, which on a comma-free integer matched only the
+# first three digits and then restarted: `177866` came back as `177` and `866`.
+# That tore every figure a filing prints in millions into fragments, and
+# `_unexplained_literals` then rejected the tail as a number nobody had cited --
+# refusing correct arithmetic. Leading `\d+` is greedy, so `1,577`, `177866`
+# and `9,497,578` each match whole.
+_NUMBER = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 
 # A stated answer is a rounding of the computed value, not a re-derivation of
 # it, so agreement is relative and generous enough to allow "15%" for 14.86%

@@ -10,9 +10,11 @@ from analyst_copilot.agent.tools.calculator import (
 )
 from analyst_copilot.agent.tools.reporting import (
     REPORT_FINDING,
+    REPORT_READING,
     REPORT_VALIDATION,
     SUBMIT_ANSWER,
     ReportFindingTool,
+    ReportReadingTool,
     ReportValidationTool,
     SubmitAnswerTool,
 )
@@ -27,6 +29,7 @@ from analyst_copilot.agent.tools.document import (
 
 __all__ = [
     "REPORT_FINDING",
+    "REPORT_READING",
     "REPORT_VALIDATION",
     "SUBMIT_ANSWER",
     "CalculateTool",
@@ -36,6 +39,7 @@ __all__ = [
     "ReadLinesTool",
     "ReadPageTool",
     "ReportFindingTool",
+    "ReportReadingTool",
     "ReportValidationTool",
     "SearchDocumentTool",
     "SubmitAnswerTool",

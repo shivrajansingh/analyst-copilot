@@ -44,6 +44,26 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = ""
 
+    # The model that CHECKS an answer, which must not be the one that wrote it.
+    #
+    # A checker sharing the writer's model shares its blind spots: measured on
+    # the practice key it re-derived the writer's own wrong formula, confirmed
+    # the arithmetic and passed 9 of 11 wrong answers. A second opinion is only
+    # a second opinion when it comes from somewhere else.
+    #
+    # Empty means "use the answering model", which is what shipped. URL and key
+    # fall back to the chat ones, so a model on the same gateway needs only a
+    # name here. It must support tool calling.
+    validator_url: str = ""
+    validator_api_key: str = ""
+    validator_model: str = ""
+
+    # Flat rate for the validator model, USD per million tokens. Unset means its
+    # tokens are counted and carry no dollar figure, same as the chat model.
+    validator_price_input: float = 0.0
+    validator_price_output: float = 0.0
+    validator_price_cached_input: float = 0.0
+
     # Embedding server (OpenAI-compatible /v1/embeddings — Ollama, remote APIs, etc.)
     embedding_base_url: str = ""
     embedding_api_key: str = ""
@@ -112,6 +132,21 @@ class Settings(BaseSettings):
     agent_enabled: bool = True
     # Second opinion on a fast-path answer, from a reader that did not write it.
     agent_validate_answers: bool = True
+    # Check by re-answering rather than by reviewing.
+    #
+    # Off, the checker is shown the question, the answer and the page and asked
+    # whether the answer is right. Models agree when asked that way: on the
+    # practice key it approved 9 of the 11 wrong answers, including one where it
+    # re-derived the writer's own wrong formula and confirmed the arithmetic.
+    #
+    # On, it is shown the question and the page but *not* the answer, and asked
+    # to answer for itself. The two answers are then compared -- in code when
+    # both are figures. It cannot rubber-stamp what it was never shown.
+    validator_blind: bool = True
+    # Retries when the checker returns neither a verdict nor a tool call. A
+    # failed check currently serves the answer unchecked, which happened 9 times
+    # in 62 questions, so it is worth one more attempt before giving up.
+    validator_retries: int = 1
     agent_deep_search: bool = True
     # Pages one reader agent is responsible for. Every page belongs to exactly
     # one reader, so the readers together have read the whole document.
@@ -168,6 +203,31 @@ class Settings(BaseSettings):
         if not self.openai_url:
             return ""
         return _strip_api_suffix(self.openai_url)
+
+    @property
+    def validator_base_url(self) -> str:
+        """Base URL for the checker's provider. Falls back to the chat one."""
+        if self.validator_url:
+            return _strip_api_suffix(self.validator_url)
+        return self.chat_base_url
+
+    @property
+    def resolved_validator_api_key(self) -> str:
+        return self.validator_api_key or self.openai_api_key
+
+    @property
+    def resolved_validator_model(self) -> str:
+        return self.validator_model or self.openai_model
+
+    @property
+    def validator_is_separate(self) -> bool:
+        """
+        Whether checking actually runs on a different model.
+
+        Configuring the answering model's own name here is not a second opinion,
+        so it is treated as "not configured" rather than silently honoured.
+        """
+        return bool(self.validator_model) and self.validator_model != self.openai_model
 
     @property
     def resolved_embedding_base_url(self) -> str:

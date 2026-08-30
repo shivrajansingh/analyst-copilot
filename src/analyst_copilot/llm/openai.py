@@ -14,24 +14,39 @@ from analyst_copilot import usage as metering
 class OpenAICompatibleChatClient(ChatClient):
     """Chat client using POST /v1/chat/completions."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> None:
+        """
+        A client for one model on one endpoint.
+
+        The arguments exist so a second model can be addressed without a second
+        class. Everything omitted falls back to the chat configuration, so
+        `OpenAICompatibleChatClient()` is what it always was.
+        """
         settings = get_settings()
-        if not settings.openai_api_key or not settings.chat_base_url:
+        base_url = base_url or settings.chat_base_url
+        api_key = api_key or settings.openai_api_key
+        model = model or settings.openai_model
+        if not api_key or not base_url:
             raise ValueError("OPENAI_URL and OPENAI_API_KEY must be set for chat completions")
 
         default_headers: Optional[Dict[str, str]] = None
-        if "ngrok" in settings.chat_base_url:
+        if "ngrok" in base_url:
             default_headers = {"ngrok-skip-browser-warning": "true"}
 
-        self._model = settings.openai_model
+        self._model = model
         self._client = OpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.chat_base_url,
+            api_key=api_key,
+            base_url=base_url,
             default_headers=default_headers,
             timeout=120.0,
             max_retries=2,
         )
-        self._base_url = settings.chat_base_url
+        self._base_url = base_url
 
     @property
     def model_name(self) -> str:
