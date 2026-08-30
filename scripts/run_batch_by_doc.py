@@ -16,6 +16,7 @@ Usage:
   python scripts/run_batch_by_doc.py --limit 5
   python scripts/run_batch_by_doc.py --base-url https://analyst-copilot-stage.technicalheist.com --limit 10
   python scripts/run_batch_by_doc.py --answer-dir temp/answer-blind-checker
+  python scripts/run_batch_by_doc.py --only-ids temp/scoring/failed-ids.txt
   python scripts/run_batch_by_doc.py --answer-dir temp/answer --filings-dir data/filings --questions data/questions-by-doc.json
 
 Requires: Python 3.9+, no extra deps (uses urllib). Set base URL via --base-url or env ANALYST_BASE_URL.
@@ -39,6 +40,15 @@ DEFAULT_FILINGS_DIR = PROJECT_ROOT / "data" / "filings"
 DEFAULT_QUESTIONS = PROJECT_ROOT / "data" / "questions-by-doc.json"
 DEFAULT_ANSWER_DIR = PROJECT_ROOT / "temp" / "answer"
 DEFAULT_BASE_URL = os.environ.get("ANALYST_BASE_URL", "http://127.0.0.1:8000")
+
+# Cloudflare answers 520-530 when it cannot reach the origin -- a dropped
+# tunnel, a restarting container. It is a wait, not a verdict on the request,
+# so it is retried like a 503 rather than failing the document.
+RETRYABLE = (403, 429, 500, 502, 503, 520, 521, 522, 523, 524, 525, 526, 527, 530)
+# Consecutive documents that failed before the run gives up. Without it a
+# host that goes away marches through every remaining filing in a second
+# each and reports a finished run that asked almost nothing.
+MAX_CONSECUTIVE_DOC_FAILURES = 3
 
 BUDGET_SECONDS = 600
 POLL_INTERVAL = 10
@@ -65,7 +75,7 @@ def http_json(method: str, url: str, body: Optional[dict] = None, headers: Optio
                     js = json.loads(text) if text.strip() else {}
                 except json.JSONDecodeError:
                     js = {"raw": text}
-                if status in (403, 429, 500, 502, 503) and attempt < retries:
+                if status in RETRYABLE and attempt < retries:
                     time.sleep(2 ** attempt + 1)
                     continue
                 return status, js
@@ -75,7 +85,7 @@ def http_json(method: str, url: str, body: Optional[dict] = None, headers: Optio
                 js = json.loads(raw) if raw.strip() else {}
             except json.JSONDecodeError:
                 js = {"raw": raw, "error": str(e)}
-            if e.code in (403, 429, 500, 502, 503) and attempt < retries:
+            if e.code in RETRYABLE and attempt < retries:
                 time.sleep(2 ** attempt + 1)
                 last_exc = (e.code, js)
                 continue
@@ -439,6 +449,7 @@ def main():
     parser.add_argument("--answer-dir", default=str(DEFAULT_ANSWER_DIR), help="Dir to write answer files")
     parser.add_argument("--limit", type=int, default=None, help="Stop after N questions total (default all)")
     parser.add_argument("--folder-prefix", default="", help="Optional prefix for folder names")
+    parser.add_argument("--only-ids", default=None, help="File of financebench_ids, one per line. Ask only those.")
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -454,6 +465,23 @@ def main():
         print(f"questions not found: {questions_path}", file=sys.stderr)
         sys.exit(1)
 
+    # Re-running one set of questions rather than all of them. The point is a
+    # before/after on the same questions: a fix is only a fix if the questions it
+    # was aimed at move, so the run has to be restricted to them rather than
+    # inferred from a whole-corpus score that moved for any number of reasons.
+    only_ids = None
+    if args.only_ids:
+        only_path = Path(args.only_ids)
+        if not only_path.exists():
+            print(f"--only-ids file not found: {only_path}", file=sys.stderr)
+            sys.exit(1)
+        only_ids = {
+            line.strip()
+            for line in only_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        print(f"Restricted to {len(only_ids)} question id(s) from {only_path}")
+
     ensure_dir(answer_dir)
     qmap = load_questions_map(questions_path)
     health_chat, health_embed = health_model(base_url)
@@ -464,6 +492,7 @@ def main():
 
     total_questions = 0
     total_docs = 0
+    consecutive_failures = 0
 
     for fpath in filings:
         doc_name = fpath.stem  # e.g. 3M_2018_10K
@@ -478,8 +507,14 @@ def main():
             break
 
         questions: List[dict] = entry.get("questions", []) or []
+        if only_ids is not None:
+            questions = [q for q in questions if q.get("financebench_id") in only_ids]
         if not questions:
-            print(f"Skip {doc_name}: 0 questions")
+            # Said quietly. With --only-ids most documents have nothing to ask,
+            # and skipping before the folder call is what stops a 10-question
+            # re-run from touching all 79 filings.
+            if only_ids is None:
+                print(f"Skip {doc_name}: 0 questions")
             continue
 
         # remaining budget for this doc
@@ -500,7 +535,17 @@ def main():
             print(f"Folder {folder}: document_count={col.get('document_count')} ready={col.get('ready_count')} searchable={col.get('searchable')}")
         except Exception as e:
             print(f"  create_folder failed for {folder}: {e}", file=sys.stderr)
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_DOC_FAILURES:
+                print(
+                    f"\nGiving up: {consecutive_failures} documents in a row could not "
+                    f"be reached. The host is down, not the documents -- rerun when it "
+                    f"is back and the answers already written will be skipped.",
+                    file=sys.stderr,
+                )
+                break
             continue
+        consecutive_failures = 0
 
         # 2. upload (skip if already indexed)
         already_ready = False
