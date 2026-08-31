@@ -176,11 +176,49 @@ OPENAI_MODEL=...
 EMBEDDING_BASE_URL=http://localhost:11434/v1
 EMBEDDING_API_KEY=ollama
 EMBEDDING_MODEL=bge-m3
+
+# Validator — the model that checks an answer in tier 2 (optional)
+VALIDATOR_URL=
+VALIDATOR_API_KEY=
+VALIDATOR_MODEL=
+
+# Flat price for the validator model, USD per million tokens. Optional.
+# Unset means its tokens are counted but not priced — the same refusal to guess
+# that applies to the chat model.
+VALIDATOR_PRICE_INPUT=
+VALIDATOR_PRICE_OUTPUT=
+VALIDATOR_PRICE_CACHED_INPUT=
 ```
 
 **Embedding URL resolution:** `EMBEDDING_BASE_URL` → `{OLLAMA_URL}/v1` → `{OPENAI_URL}` stripped to `/v1`.
 
 Chat and embeddings use **separate** models and URLs. `OPENAI_MODEL` is not used for embeddings.
+
+### The validator model
+
+Tier 2 checks an answer that tier 1 wrote. That check is only worth running on a
+**different** model. The same model has the same blind spot twice: on the
+practice key it re-derived its own wrong formula, confirmed the arithmetic, and
+passed 9 of 11 wrong answers.
+
+| Variable | Effect when set | Effect when blank |
+|---|---|---|
+| `VALIDATOR_MODEL` | Checking runs on this model | Checking runs on `OPENAI_MODEL` — no second opinion |
+| `VALIDATOR_URL` | Provider endpoint for the checker | Falls back to `OPENAI_URL` |
+| `VALIDATOR_API_KEY` | Key for that endpoint | Falls back to `OPENAI_API_KEY` |
+
+So a checker on the same gateway needs only `VALIDATOR_MODEL`. The model **must
+support tool calling** — the checker finishes by calling `report_validation`.
+Naming the answering model here counts as unset, not as a second opinion.
+
+The three `VALIDATOR_PRICE_*` rates are USD per million tokens, flat (no peak
+tier). Leave them unset and the checker's tokens are still counted, just not
+priced — the same refusal to guess a gateway's margin that applies to
+`CHAT_PRICE_*`. `VALIDATOR_PRICE_CACHED_INPUT` covers input the provider served
+from its own cache.
+
+`GET /api/v1/health` reports the validator model in use, so you can confirm the
+setting took.
 
 ## Ask one question (index if needed)
 
