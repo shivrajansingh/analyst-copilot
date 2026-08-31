@@ -37,7 +37,7 @@ class AnswerMode(str, Enum):
 class Stage(str, Enum):
     """Progress milestones, streamed to the caller as they happen."""
 
-    ROUTING = "routing"
+    PLANNING = "planning"
     DECOMPOSING = "decomposing"
     RETRIEVING = "retrieving"
     READING = "reading"
@@ -110,6 +110,10 @@ class Finding:
     why_authoritative: str = ""
     inputs: List[EvidenceInput] = field(default_factory=list)
     computation: str = ""
+    #: True when this restates an earlier turn of the thread rather than a fresh
+    #: read. The citation is the earlier answer's, so a caller that shows one can
+    #: also say where it really came from.
+    recalled: bool = False
     confidence: float = 0.0
     # Which shard produced this, for progress reporting and debugging.
     shard: Optional[int] = None
@@ -173,6 +177,10 @@ class AnswerPart:
     abstention_reason: Optional[str] = None
     inputs: List[EvidenceInput] = field(default_factory=list)
     computation: str = ""
+    #: True when this restates an earlier turn of the thread rather than a fresh
+    #: read. The citation is the earlier answer's, so a caller that shows one can
+    #: also say where it really came from.
+    recalled: bool = False
     # Why this part escalated past the fast path, when it did. Kept because it
     # is the diagnostic that says whether the tier boundary is drawn correctly.
     escalation_reason: str = ""
@@ -207,3 +215,7 @@ class AgentAnswer:
     shards_run: int = 0
     inputs: List[EvidenceInput] = field(default_factory=list)
     computation: str = ""
+    #: True when this restates an earlier turn of the thread rather than a fresh
+    #: read. The citation is the earlier answer's, so a caller that shows one can
+    #: also say where it really came from.
+    recalled: bool = False

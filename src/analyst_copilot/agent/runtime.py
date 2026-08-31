@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from analyst_copilot.agent.cancellation import CancelToken, token_or_never
 from analyst_copilot.agent.tools.base import ToolRegistry, ToolResult
 from analyst_copilot.agent import trace as tracing
 from analyst_copilot.llm.base import ChatClient, ChatTurn, ToolCall
@@ -86,6 +87,7 @@ class AgentRuntime:
         history: Optional[List[Dict[str, Any]]] = None,
         on_tool: Optional[Callable[[str, ToolResult], None]] = None,
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> AgentRun:
         """
         Drive the conversation until the agent reports, or its bounds are hit.
@@ -93,7 +95,14 @@ class AgentRuntime:
         `terminal_tools` names the tool(s) that end the run. Their arguments are
         returned as `report` without being executed — the "tool" is the schema,
         not an action.
+
+        `cancel` is checked before every model call and every tool call, which
+        is where an agent's time and money actually go. A stopped agent raises
+        `Cancelled` rather than returning a run: an empty `AgentRun` would be
+        indistinguishable from an agent that found nothing, and a fan-out would
+        happily adjudicate over it.
         """
+        stop = token_or_never(cancel)
         terminal = set(terminal_tools)
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system}]
         messages.extend(history or [])
@@ -103,6 +112,9 @@ class AgentRuntime:
         run = AgentRun(transcript=messages)
 
         for iteration in range(1, self._max_iterations + 1):
+            # Before the spend, not after it: the point of a checkpoint here is
+            # that turn n+1 never starts once the run has been stopped.
+            stop.raise_if_cancelled()
             run.iterations = iteration
             try:
                 turn = self._chat.complete_with_tools(
@@ -136,10 +148,10 @@ class AgentRuntime:
                     )
                 return run
 
-            stop = self._execute(
-                turn, registry, terminal, messages, run, on_tool, on_trace
+            finished = self._execute(
+                turn, registry, terminal, messages, run, on_tool, on_trace, stop
             )
-            if stop:
+            if finished:
                 return run
             if run.tool_calls >= self._max_tool_calls:
                 messages.append(
@@ -165,6 +177,7 @@ class AgentRuntime:
         run: AgentRun,
         on_tool: Optional[Callable[[str, ToolResult], None]],
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> bool:
         """
         Run this turn's tool calls. Returns True when the run should end.
@@ -174,6 +187,7 @@ class AgentRuntime:
         the final report still needs a tool message for every call it made, or
         the transcript is invalid for any later request.
         """
+        stop = token_or_never(cancel)
         report: Optional[ToolCall] = None
 
         for call in turn.tool_calls:
@@ -183,6 +197,9 @@ class AgentRuntime:
                 messages.append(_tool_message(call, "Reported."))
                 continue
 
+            # A tool call reads pages and can be slow enough to be worth not
+            # starting. The terminal call above is exempt: it executes nothing.
+            stop.raise_if_cancelled()
             tracing.emit(on_trace, tracing.tool_call("", call.name))
             result = registry.invoke(call.name, call.arguments)
             if on_tool is not None:

@@ -1674,6 +1674,16 @@
     ]
   },
   {
+    "doc_path": "filings/STARBUCKS_2025_10K.htm",
+    "company": "Starbucks",
+    "doc_name": "STARBUCKS_2025_10K",
+    "gics_sector": "Consumer Discretionary",
+    "doc_type": "10k",
+    "doc_period": 2025,
+    "doc_link": "https://www.sec.gov/Archives/edgar/data/829224/000082922425000001/sbux-20250928.htm",
+    "questions": []
+  },
+  {
     "doc_path": "filings/ULTABEAUTY_2023_10K.htm",
     "company": "Ulta Beauty",
     "doc_name": "ULTABEAUTY_2023_10K",

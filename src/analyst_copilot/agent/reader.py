@@ -20,6 +20,7 @@ import logging
 import re
 from typing import List, Optional
 
+from analyst_copilot.agent.cancellation import CancelToken, token_or_never
 from analyst_copilot.agent.corpus import DocumentCorpus, DocumentUnavailable, Shard
 from analyst_copilot.agent.models import EvidenceInput, Finding
 from analyst_copilot.agent.prompts import READER_SYSTEM, build_reader_prompt
@@ -67,8 +68,21 @@ class ShardReader:
         shard: Shard,
         context: str = "",
         on_trace: Optional[tracing.TraceCallback] = None,
+        cancel: Optional[CancelToken] = None,
     ) -> Finding:
-        """Read one shard. Never raises: a failed reader is a not-found reader."""
+        """
+        Read one shard. Never raises for a failure: a failed reader is a
+        not-found reader.
+
+        It does raise `Cancelled`, and that is the one exception to the rule. A
+        stopped reader has not decided there is nothing on its pages — it never
+        looked — and reporting that as a not-found finding would let a fan-out
+        conclude "the whole filing was read" over shards nobody opened.
+        """
+        stop = token_or_never(cancel)
+        # Queued readers are the cheap half of a stop: a shard that has not
+        # started costs nothing to drop, and most of a fan-out is queued.
+        stop.raise_if_cancelled()
         if not shard.pages:
             return Finding(found=False, shard=shard.index)
 
@@ -102,6 +116,7 @@ class ShardReader:
             registry=registry,
             terminal_tools=(REPORT_FINDING,),
             on_trace=on_trace,
+            cancel=stop,
         )
 
         finding = self._to_finding(run, shard, doc_name)

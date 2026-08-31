@@ -1,17 +1,46 @@
-# Multi-agent parallel retrieval — assessment and recommendation
+# Why we read every page
 
-**Status:** implemented, with one deliberate departure. See
-[Agent harness](16-agent-harness.md) for what was built. This document is kept
-as the analysis that argued for it, and it is worth reading first because the
-failure mode in §4 is the one the built system spends most of its design on.
+**This is a historical document.** It is the analysis that argued for tier 3,
+written before it was built. The body below is kept as it was, because the
+reasoning is what made the design defensible — and because §4 predicted the exact
+failure the built system spends most of its effort on.
 
-**What changed in the build:** §5 recommended fanning out over a *shortlist*
-sized from an unmeasured recall curve. The shipped harness fans out over **every
-page**, because the shortlist was the thing capping the score in the first place
-— and the precision risk §4 warns about is handled where this document said it
-would have to be, in synthesis plus a deterministic verifier, with the addition
-that readers are given non-overlapping slices so duplicate candidates are always
-genuinely different pages.
+**What was built:** [the agent harness](16-agent-harness.md).
+
+```mermaid
+flowchart TD
+    PROB["only 5 pages are ever read<br/>the right page is there 58% of the time"] --> FIX[read every page instead]
+    FIX --> WIN["no ceiling: the answer is always<br/>in front of some agent"]
+    FIX --> RISK["a filing prints its figures 4 or 5 times,<br/>so a dozen agents all say 'found it'"]
+    RISK --> COST["a wrong page scores 0<br/>a confident wrong answer scores -1"]
+    COST --> NEED[["so the agent that CHOOSES between<br/>candidates is the whole design"]]
+```
+
+**In plain English, here is what it says:**
+
+- The system could only answer from the 5 pages retrieval picked, and those
+  contain the right page 58% of the time. So 42% of questions were impossible,
+  not hard.
+- Reading every page removes that limit. It costs about 50 times as much.
+- But reading more finds more *copies* of the same figure. A filing prints its
+  important numbers in the statement, in the commentary, in a footnote and in the
+  five-year summary. So a dozen agents all report "found it", each pointing
+  somewhere different.
+- That turns a *finding* problem into a *choosing* problem, and the scoring rule
+  punishes choosing wrong harder: a wrong page scores 0, a confidently wrong
+  answer scores −1.
+- So the agent that chooses between candidates is not a merge step. It is the
+  component the whole design rests on.
+
+**What changed between the plan and the build:** this document recommended reading
+only a shortlist of pages. The built system reads **every** page, because the
+shortlist was the thing capping the score in the first place. The precision risk
+in §4 is handled where this document said it would have to be — in the choosing
+agent, plus a verifier that has the last word — with one addition: readers get
+non-overlapping slices, so two readers reporting the same figure really did find
+it in two different places.
+
+---
 
 **Question:** should the single QA call be replaced by many agents reading the
 document's Markdown pages in parallel, with a synthesis agent combining them?

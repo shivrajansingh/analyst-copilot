@@ -16,7 +16,9 @@ from analyst_copilot.agent.models import (
     Stage,
 )
 from analyst_copilot.agent.orchestrator import DeepResult, format_findings
-from analyst_copilot.agent.router import IntentRouter, normalize_message
+from analyst_copilot.agent.planner import PlanKind
+from analyst_copilot.agent.recall import HistoryTurn, Recollection
+from analyst_copilot.config.settings import get_settings
 from analyst_copilot.agent.decompose import QuestionDecomposer
 from analyst_copilot.agent.conversation import FALLBACK_REPLY, ConversationResponder
 from analyst_copilot.agent.pipeline import AnalystAgent
@@ -26,7 +28,15 @@ from analyst_copilot.parsing.models import FilingDocument, Page
 from analyst_copilot.retrieval.models import ScoredPage, SearchResult
 from analyst_copilot.services.qa.models import NOT_FOUND_MESSAGE, QAAnswer
 
-from offline_harness import StubCollections, StubDeepSearch, StubValidator, build_agent
+from offline_harness import (
+    StubCollections,
+    StubDeepSearch,
+    StubPlanner,
+    StubRecaller,
+    StubResponder,
+    StubValidator,
+    build_agent,
+)
 
 DOC = "TESTCO_2022_10K"
 
@@ -114,7 +124,7 @@ def _stages(agent, message, **kwargs):
     return [event.stage for event in seen]
 
 
-# --- routing --------------------------------------------------------------- #
+# --- planning, and the escapes that stop a bad plan being final ------------ #
 def test_a_greeting_never_reaches_retrieval(markdown):
     qa = FakeQA()
     deep = StubDeepSearch()
@@ -129,7 +139,7 @@ def test_a_greeting_never_reaches_retrieval(markdown):
 
 def test_a_greeting_is_answered_with_nothing_indexed(markdown):
     agent = build_agent(FakeQA(), ready_documents=[])
-    answer = agent.answer("hello there", doc_name=DOC, scope_ready=False)
+    answer = agent.answer("hello", doc_name=DOC, scope_ready=False)
     assert answer.mode is AnswerMode.CONVERSATIONAL
     assert answer.answer != NOT_FOUND_MESSAGE
 
@@ -141,65 +151,94 @@ def test_a_real_question_with_nothing_indexed_abstains_with_a_fixable_reason(mar
     assert answer.abstention_reason == "no_indexed_documents"
 
 
-@pytest.mark.parametrize(
-    "message,intent",
-    [
-        ("Hi", Intent.SMALLTALK),
-        ("thanks!", Intent.SMALLTALK),
-        ("  HELLO  ", Intent.SMALLTALK),
-        ("what can you do?", Intent.CAPABILITY),
-        ("who are you", Intent.CAPABILITY),
-    ],
-)
-def test_common_messages_are_classified_without_a_model_call(message, intent):
-    routing = IntentRouter(None).route(message)
-    assert routing.intent is intent
-    assert routing.matched_literally
-
-
-@pytest.mark.parametrize(
-    "message",
-    ["hi, what was capex in 2022?", "and the year before?", "capex 2022"],
-)
-def test_anything_that_might_be_a_question_goes_to_the_document(message):
-    """Answering a real question from nothing is the worse error."""
-    assert IntentRouter(None).route(message).intent is Intent.DOCUMENT_QUESTION
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        "What is the FY2018 capital expenditure amount for 3M?",
-        "capex 2022",
-        "What drove the change in operating margin?",
-        "total debt",
-        "Show me revenue for the last three years",
-        "net income $ millions",
-    ],
-)
-def test_an_obvious_document_question_costs_no_model_call(message):
+def test_the_planner_researches_the_resolved_question_not_the_message(markdown):
     """
-    Classifying "What was FY2018 capex?" was a full round trip -- measured at 25s
-    against a slow provider -- on the critical path of every question, to reach a
-    conclusion the heuristics reach for free.
+    "and the year before?" cannot be retrieved for. Resolving it once at the top
+    means every stage below gets a question that stands on its own -- including
+    the checker, which sees no history at all.
     """
-    routing = IntentRouter(None).route(message)
-    assert routing.intent is Intent.DOCUMENT_QUESTION
-    assert routing.matched_literally, "should not have needed the model"
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        planner=StubPlanner(question="What was 3M's capital expenditure in FY2017?"),
+        ready_documents=[DOC],
+    )
+    answer = agent.answer("and the year before?", doc_name=DOC)
+    assert qa.questions == ["What was 3M's capital expenditure in FY2017?"]
+    # The message the analyst typed is what gets shown back to them.
+    assert answer.question == "and the year before?"
 
 
-@pytest.mark.parametrize("message", ["how are you", "how are you doing", "hows it going"])
-def test_the_short_circuit_does_not_swallow_social_messages(message):
-    """The exact matches are checked first, so these stay small talk."""
-    assert IntentRouter(None).route(message).intent is Intent.SMALLTALK
+class NeedsDocumentResponder:
+    """A reply that hands the message back. The first escape."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def reply(self, message, collection=None, documents=(), history="", facts=""):
+        from analyst_copilot.agent.conversation import ConversationReply
+
+        self.calls += 1
+        return ConversationReply(needs_document=True)
 
 
-def test_punctuation_and_case_do_not_defeat_the_literal_match():
-    assert normalize_message("  Hello!!  ") == "hello"
+def test_a_misclassified_question_is_handed_back_and_searched(markdown):
+    """
+    The one planner mistake that cannot be recovered from is sending a real
+    question down the chat path, where it is answered from nothing. So the reply
+    is allowed to refuse, and the question is then researched properly.
+    """
+    qa = FakeQA()
+    responder = NeedsDocumentResponder()
+    agent = build_agent(
+        qa,
+        planner=StubPlanner(kind=PlanKind.SMALLTALK),
+        ready_documents=[DOC],
+    )
+    agent._responder = responder
+
+    answer = agent.answer("What was FY2018 capex?", doc_name=DOC)
+    assert responder.calls == 1, "the chat path was tried"
+    assert qa.questions == ["What was FY2018 capex?"], "and then the filing was searched"
+    assert answer.found
+    assert answer.mode is AnswerMode.FAST
 
 
-def test_a_conversational_reply_still_happens_without_a_model():
-    assert ConversationResponder(None).reply("hi") == FALLBACK_REPLY
+def test_a_corpus_question_is_answered_without_searching(markdown):
+    """A question about the document set is answered from the manifest."""
+    qa = FakeQA()
+    deep = StubDeepSearch()
+    agent = build_agent(
+        qa,
+        planner=StubPlanner(kind=PlanKind.CORPUS_META),
+        deep=deep,
+        ready_documents=[DOC],
+    )
+    answer = agent.answer("How many documents do you have?", doc_name=DOC)
+    assert answer.mode is AnswerMode.CONVERSATIONAL
+    assert qa.questions == []
+    assert deep.calls == []
+
+
+def test_a_planner_that_fails_sends_the_question_to_the_document(markdown):
+    """
+    The safe direction. Searching a filing for a greeting wastes seconds;
+    answering a real question without reading the filing invents something.
+    """
+    from analyst_copilot.agent.planner import Planner
+
+    class DeadChat:
+        @property
+        def model_name(self):
+            return "dead"
+
+        def complete(self, *a, **k):
+            raise RuntimeError("provider down")
+
+    plan = Planner(DeadChat()).plan("anything at all")
+    assert plan.kind is PlanKind.DOCUMENT
+    assert plan.documents == [], "and over every document"
+    assert plan.assumed
 
 
 # --- tier 1 and the validator gate ----------------------------------------- #
@@ -396,7 +435,7 @@ def test_a_compound_question_gets_one_citation_per_part(markdown):
 def test_progress_is_reported_in_order(markdown):
     agent = build_agent(FakeQA(), ready_documents=[DOC])
     stages = _stages(agent, "What was FY2022 capex?", doc_name=DOC)
-    assert stages[0] is Stage.ROUTING
+    assert stages[0] is Stage.PLANNING
     assert Stage.RETRIEVING in stages
     assert Stage.VALIDATING in stages
     assert stages[-1] is Stage.DONE
@@ -507,3 +546,366 @@ class _StubCorpus:
 
     def doc_names(self):
         return [DOC]
+
+
+# --- scoping, and the widen escape ---------------------------------------- #
+OTHER = "TESTCO_2019_10K"
+
+
+@pytest.fixture
+def markdown_pair(tmp_path, monkeypatch):
+    """
+    Two documents in one filing set.
+
+    Scoping cannot be tested with one document: `scoped_documents` ignores a
+    scope that matches nothing, so a single-document corpus always searches
+    itself whatever the planner asked for.
+    """
+    store = MarkdownPageStore(base_dir=tmp_path / "markdown")
+    store.save(
+        FilingDocument(
+            doc_name=DOC,
+            source_path="",
+            pages=[
+                Page(doc_name=DOC, page_index=59, text=(
+                    "# Consolidated Statement of Cash Flows\n\n"
+                    "| Purchases of property, plant and equipment (PP&E) | (1,577) | (1,373) |"
+                ))
+            ],
+        )
+    )
+    store.save(
+        FilingDocument(
+            doc_name=OTHER,
+            source_path="",
+            pages=[Page(doc_name=OTHER, page_index=0, text="# Cover\n\nTESTCO 2019")],
+        )
+    )
+    monkeypatch.setattr(
+        "analyst_copilot.agent.pipeline.DocumentCorpus.for_collection",
+        classmethod(lambda cls, name, docs: cls(store=store, doc_names=list(docs), collection=name)),
+    )
+    return store
+
+class ScopedDeepSearch:
+    """Finds the answer only when the search is *not* scoped to FY2022."""
+
+    def __init__(self, answer_in="3M_2018_10K"):
+        self.answer_in = answer_in
+        self.scopes = []
+
+    def search(self, question, corpus, context="", on_stage=None, on_trace=None,
+               only=None, excluding=None, **_extra):
+        self.scopes.append({"only": list(only or []), "excluding": list(excluding or [])})
+        reachable = corpus.scoped_documents(only=only, excluding=excluding)
+        if self.answer_in not in reachable:
+            return DeepResult(found=False, reason="nothing here", shards_run=2, pages_read=20)
+        return DeepResult(
+            found=True,
+            answer="$1,577 million",
+            doc_name=DOC,
+            page=59,
+            quote="| Purchases of property, plant and equipment (PP&E) | (1,577) | (1,373) |",
+            shards_run=3,
+            pages_read=30,
+        )
+
+
+def test_a_scoped_search_that_finds_nothing_widens(markdown_pair):
+    """
+    The escape that makes a wrong scope cost time instead of the answer. The
+    planner picks the wrong document of the two; the one it skipped is read
+    before the system gives up.
+    """
+    deep = ScopedDeepSearch(answer_in=DOC)
+    agent = build_agent(
+        FakeQA(),
+        planner=StubPlanner(documents=[OTHER]),
+        # Doubts the fast answer so the deep path runs, then accepts what the
+        # widened search found.
+        validator=EscalateThenAccept(),
+        deep=deep,
+        ready_documents=[DOC, OTHER],
+    )
+    answer = agent.answer("What was FY2018 capex?", collection="SET")
+
+    assert len(deep.scopes) == 2, "it tried the scope, then widened past it"
+    assert deep.scopes[0]["only"] == [OTHER]
+    assert deep.scopes[1]["excluding"] == [OTHER]
+    assert answer.found, "the answer was reachable and must not be lost"
+    # The cost of both passes is reported, not just the second.
+    assert answer.pages_read == 50
+    assert answer.shards_run == 5
+
+
+def test_the_planners_scope_reaches_the_fan_out(markdown_pair):
+    deep = StubDeepSearch()
+    agent = build_agent(
+        FakeQA(),
+        planner=StubPlanner(documents=[DOC]),
+        validator=StubValidator(Verdict.INCORRECT, "escalate"),
+        deep=deep,
+        ready_documents=[DOC, OTHER],
+    )
+    agent.answer("What was FY2018 capex?", collection="SET")
+    assert deep.scopes[0]["only"] == [DOC]
+
+
+def test_an_unscoped_search_never_widens(markdown):
+    """Nothing was skipped, so there is nothing to widen to."""
+    deep = StubDeepSearch()
+    agent = build_agent(
+        FakeQA(),
+        validator=StubValidator(Verdict.INCORRECT, "escalate"),
+        deep=deep,
+        ready_documents=[DOC],
+    )
+    agent.answer("What was FY2018 capex?", doc_name=DOC)
+    assert len(deep.calls) == 1
+    assert deep.scopes[0]["only"] == []
+
+
+# --- the third path: answering from the thread ------------------------------ #
+# A `history` plan is the only kind that gets a second opinion before it is
+# trusted. These pin both outcomes: a restatement that keeps the original
+# citation, and the fall-through that makes a wrong `history` cost one call.
+CAPEX_THREAD = [
+    {"role": "user", "content": "What was FY2018 capex?"},
+    {
+        "role": "assistant",
+        "content": "FY2018 capital expenditure was $1,577 million.",
+        "found": True,
+        "page": 59,
+        "doc_name": DOC,
+    },
+]
+
+
+def test_a_recalled_answer_is_served_without_searching(markdown):
+    qa = FakeQA()
+    deep = StubDeepSearch()
+    agent = build_agent(
+        qa,
+        deep=deep,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1,577 million.",
+                source=HistoryTurn(
+                    role="assistant",
+                    content="FY2018 capital expenditure was $1,577 million.",
+                    found=True,
+                    page=59,
+                    doc_name=DOC,
+                ),
+                reason="asked again",
+            )
+        ),
+    )
+    answer = agent.answer("what was that capex figure again?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert answer.found
+    assert answer.answer == "$1,577 million."
+    assert answer.recalled
+    assert qa.questions == [], "a restatement must not search the filing"
+    assert deep.calls == []
+
+
+def test_a_recalled_answer_carries_the_original_page(markdown):
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1,577 million.",
+                source=HistoryTurn("assistant", "…$1,577 million.", True, 59, DOC),
+            )
+        ),
+    )
+    answer = agent.answer("say that again", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert answer.citation is not None
+    assert answer.citation.page == 59
+    assert answer.citation.doc_name == DOC
+    assert answer.citations == [answer.citation]
+
+
+def test_a_restatement_that_changes_a_figure_is_refused(markdown):
+    """
+    The citation about to be attached was proved for the *original* figure. A
+    restatement that quietly alters it would put an unproved number on screen
+    under a real page -- the one failure this product exists to prevent, and the
+    prompt forbidding it is an instruction, not a check.
+    """
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1,775 million.",  # transposed from 1,577
+                source=HistoryTurn("assistant", "…$1,577 million.", True, 59, DOC),
+            )
+        ),
+    )
+    answer = agent.answer("say that again", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert not answer.recalled, "a changed figure must not be served as a restatement"
+    assert qa.questions, "it must fall through to the ordinary search"
+
+
+def test_an_honest_rescaling_is_still_a_restatement(markdown):
+    """
+    1,577 million read back as 1.577 billion is the same figure in other units.
+    Comparison is by significant digits precisely so this passes.
+    """
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1.577 billion.",
+                source=HistoryTurn("assistant", "…$1,577 million.", True, 59, DOC),
+            )
+        ),
+    )
+    answer = agent.answer("in billions?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert answer.recalled
+    assert answer.citation.page == 59
+
+
+def test_a_failed_recall_falls_through_to_the_search(markdown):
+    qa = FakeQA()
+    recaller = StubRecaller()  # declines
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=recaller,
+    )
+    answer = agent.answer("what was FY2017 capex?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert recaller.calls, "recall must be consulted before the search"
+    assert qa.questions, "a history plan that recalls nothing must still be searched"
+    assert not answer.recalled
+
+
+def test_recall_sees_the_untruncated_thread(markdown):
+    recaller = StubRecaller()
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=recaller,
+    )
+    agent.answer("what was that again?", doc_name=DOC, history=CAPEX_THREAD)
+
+    _, seen = recaller.calls[0]
+    assert seen == CAPEX_THREAD, "recall needs the stored turns, not the trimmed context"
+
+
+def test_recall_can_be_switched_off(markdown):
+    qa = FakeQA()
+    recaller = StubRecaller()
+    settings = get_settings()
+    agent = AnalystAgent(
+        qa_service=qa,
+        chat_client=None,
+        collection_indexer=StubCollections([DOC]),
+        settings=settings.model_copy(update={"planner_recall_history": False}),
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        decomposer=QuestionDecomposer(None),
+        validator=StubValidator(),
+        orchestrator=StubDeepSearch(),
+        responder=ConversationResponder(None),
+        recaller=recaller,
+    )
+    agent.answer("what was that again?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert recaller.calls == [], "the thread must not be consulted when recall is off"
+    assert qa.questions, "the message is searched like any other question"
+
+
+def test_an_ordinary_question_never_consults_the_thread(markdown):
+    recaller = StubRecaller()
+    agent = build_agent(FakeQA(), ready_documents=[DOC], recaller=recaller)
+    agent.answer("What was capex?", doc_name=DOC, history=CAPEX_THREAD)
+    assert recaller.calls == []
+
+
+# --- questions about the conversation itself -------------------------------- #
+# "what was the first question?" cannot be answered by any filing. Reading every
+# page to fail is the worst outcome the planner can produce, so this path is the
+# one place the NEEDS_DOCUMENT escape is deliberately not honoured.
+def test_a_question_about_the_thread_never_searches(markdown):
+    qa = FakeQA()
+    deep = StubDeepSearch()
+    agent = build_agent(
+        qa, deep=deep, ready_documents=[DOC], planner=StubPlanner(kind=PlanKind.THREAD_META)
+    )
+    answer = agent.answer("what was the 1st question?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert qa.questions == [], "the filing must not be searched for what was typed"
+    assert deep.calls == []
+    assert answer.mode is AnswerMode.CONVERSATIONAL
+    assert answer.intent is Intent.CAPABILITY
+
+
+def test_an_empty_thread_says_nothing_was_asked(markdown):
+    responder = StubResponder()  # echoes the facts it is given
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.THREAD_META),
+        responder=responder,
+    )
+    answer = agent.answer("what was the last question?", doc_name=DOC, history=[])
+    assert "No question has been asked yet" in answer.answer
+
+
+def test_the_thread_facts_name_the_first_question(markdown):
+    responder = StubResponder()
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.THREAD_META),
+        responder=responder,
+    )
+    agent.answer("what was the 1st question?", doc_name=DOC, history=CAPEX_THREAD)
+    assert 'The first question was: "What was FY2018 capex?"' in responder.facts[0]
+
+
+def test_a_thread_question_that_asks_for_the_document_is_still_not_searched(markdown):
+    """The escape hatch is refused here: no filing can hold the transcript."""
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.THREAD_META),
+        responder=StubResponder(needs_document=True),
+    )
+    answer = agent.answer("what did I just ask?", doc_name=DOC, history=CAPEX_THREAD)
+    assert qa.questions == []
+    assert "What was FY2018 capex?" in answer.answer
+
+
+def test_a_corpus_question_keeps_its_escape(markdown):
+    """Only thread_meta loses the escape — corpus_meta can still hand back."""
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.CORPUS_META),
+        responder=StubResponder(needs_document=True),
+    )
+    agent.answer("how many segments does it report?", doc_name=DOC)
+    assert qa.questions, "a corpus_meta message that needs the filing must reach it"

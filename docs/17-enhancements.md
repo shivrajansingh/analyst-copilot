@@ -1,247 +1,243 @@
-# What changed in this round
+# What changed, and what it measured
 
-A summary of the enhancements added on top of the retrieval pipeline, what
-measured failure each one closes, and what it measured afterwards. The deep
-reference for the biggest of them is [Agent harness](16-agent-harness.md); this
-document is the map and the numbers.
+A summary of everything added on top of the original retrieval pipeline. What each
+change fixed, and what happened to the score.
+
+Start here, then follow the links.
+
+```mermaid
+flowchart TD
+    M([message]) --> P["1 · PLANNER<br/>what does this need?"]
+    P -->|not a question| C([reply])
+    P -->|about the file list| F([answer from the list])
+    P -->|a real question| T1["TIER 1 · search + answer"]
+    T1 --> T2["3 · TIER 2 · checker"]
+    T2 -->|correct| OK([answer + page])
+    T2 -->|doubted| T3
+    T1 -->|nothing| T3
+    T3["2 · TIER 3 · read every page<br/>5 · partials combined"]
+    T3 --> V["4 · verify, including computed answers"]
+    V --> OK
+    V --> NO([not found in this filing])
+```
 
 ---
 
 ## Where it started
 
-The system answered from the five pages retrieval selected. Measured on all 136
-practice questions, tier 1 alone scored **+7** — 29 correct with location, 62
-abstentions, 23 correct-answer-wrong-page, 22 confidently wrong — and retrieval
-put the gold page in the top 5 for **58%** of questions.
+The system searched an index, took the top 5 pages, asked a model, and checked the
+figures. Over all 136 practice questions that scored **+7**:
 
-Four things were wrong, and each one is an enhancement below:
+| | |
+|---|---:|
+| Correct answer and page (+1) | 29 |
+| Refused (0) | 62 |
+| Correct answer, wrong page (0) | 23 |
+| **Wrong answer (−1)** | **22** |
 
-| The failure | Why no prompt could fix it |
+Four things were wrong, and no better prompt could fix any of them.
+
+| Problem | Why prompting could not help |
 |---|---|
-| 42% of questions unanswerable | The gold page was never retrieved. Nothing downstream can cite a page it was not shown. |
-| 43 numerical-reasoning questions unprovable | A computed figure appears nowhere in a filing. The verifier required every number on the cited page, so a margin could never verify. |
-| Right figure, wrong question | 23 answers were correct and cited the wrong page. Digit-tracing passes all of them, because it checks existence, not meaning. |
-| "Hi" returned *"not found in this filing"* | Every message went to retrieval. The product read as a search box with a chat skin. |
+| 42% of questions unanswerable | The right page was never retrieved. You cannot cite a page you were not shown |
+| 43 arithmetic questions unprovable | A computed figure appears nowhere in a filing. The check demanded it be on the page |
+| Right figure, wrong question | 23 answers were correct and cited the wrong page. Checking digits cannot see meaning |
+| "Hi" got "not found in this filing" | Every message went to retrieval |
+| Reading every file, every time | Nothing asked which file could hold the answer |
 
 ---
 
-## The enhancements
+## The changes
 
-| # | Enhancement | Closes | Reference |
+| # | What | Fixes | Details |
 |---|---|---|---|
-| 1 | [Whole-document deep search](#1-whole-document-deep-search) | The 58% recall ceiling | [16 §Tier 3](16-agent-harness.md#tier-3--deep-search) |
-| 2 | [Answer validation](#2-answer-validation) | Right figure, wrong question | [16 §Tier 2](16-agent-harness.md#tier-2--validation) |
-| 3 | [Derived-answer verification](#3-derived-answer-verification) | 43 unprovable computed answers | [16 §Verifying a computed answer](16-agent-harness.md#verifying-a-computed-answer) |
-| 4 | [Partial findings](#4-partial-findings) | Answers spanning two statements | [16 §Partial findings](16-agent-harness.md#partial-findings-when-no-single-reader-can-answer) |
-| 5 | [Intent routing](#5-intent-routing) | "Hi" searching a 10-K | [16 §Tier 0](16-agent-harness.md#tier-0--routing) |
-| 6 | [Question decomposition](#6-question-decomposition) | Compound questions diluting retrieval | [16 §Tier 1](16-agent-harness.md#tier-1--decomposition) |
-| 7 | [Streaming progress and the activity feed](#7-streaming-progress-and-the-activity-feed) | A minute of silence reading as a hang | [11 §trace events](11-api.md#trace-events) |
-| 8 | [Evidence surfaces](#8-evidence-surfaces) | A computed figure with nothing to check | — |
-| 9 | [Accent themes](#9-accent-themes) | A palette that read as decorative | [18](18-design-system.md) |
+| 1 | [The planner](#1-the-planner) | Reading every file; searching for a file count | [19](20-planner-agent.md) |
+| 2 | [Read every page](#2-read-every-page) | The 58% ceiling | [16](16-agent-harness.md) |
+| 3 | [A second checker](#3-a-second-checker) | Right figure, wrong question | [16](16-agent-harness.md) |
+| 4 | [Proving computed answers](#4-proving-computed-answers) | 43 unprovable questions | [16](16-agent-harness.md) |
+| 5 | [Partial findings](#5-partial-findings) | Answers spanning two statements | [16](16-agent-harness.md) |
+| 6 | [Splitting questions](#6-splitting-questions) | Two questions in one | [16](16-agent-harness.md) |
+| 7 | [Showing the work](#7-showing-the-work) | A minute of silence | [11](11-api.md) |
+| 8 | [Evidence you can check](#8-evidence-you-can-check) | A computed figure with nothing to inspect | — |
+| 9 | [Choosing the colours](#9-choosing-the-colours) | A palette that looked decorative | [18](18-design-system.md) |
 
 ---
 
-### 1. Whole-document deep search
+### 1. The planner
 
-The filing is sharded into slices of ten pages, one reader agent per slice, eight
-concurrent. Readers may read **only** their own pages, so together they have read
-the whole document and no two can report the same page. A synthesis agent then
-adjudicates the candidates on authority.
+One decision before any work starts: is this small talk, a question about the
+file list, or a real question — and if real, which files could hold the answer.
 
-Readers read the Markdown store, not the vector index — so they see pages **in
-full**, past the 2,500-character embedding cap that hides ~13% of the corpus's
-gold evidence.
+It replaced a router that decided the same thing from **125 hardcoded words**.
+Those words leaked: "how many pages does this filing have" was read as a question
+*from* the filing, because `filing` was on a list of finance words.
 
-**Measured:** reached pages the fast path could not, including the
-registered-debt-securities question whose evidence sits at character 45,234 of a
-47,221-character page — the case
-[docs/07](07-hybrid-retrieval.md#known-limits) records as invisible to
-retrieval. It cited the gold page there.
+Measured on a three-file set:
 
-Be precise about what that did and did not buy: on that question and on the
-quick-ratio one, the deep path found the **right page** and still produced a
-**wrong answer** — an over-inclusive list, and the wrong balance-sheet date. Both
-scored −1 until enhancement 2 was extended to cover them. Reaching a page is not
-the same as reading it correctly.
+| Message | Now | Files searched |
+|---|---|---|
+| Hi | small talk | none |
+| How many docs you have provided? | about the file list | none |
+| how many pages does this filing have | about the file list | none |
+| What is the total revenue in FY2018? | a real question | **1 of 3** |
+| how many segments does 3M report | a real question | all |
 
-### 2. Answer validation
+The last row is the one that proves it understands: "how many" did not fool it
+into thinking it was about the file list.
 
-A reader that did not write the answer sees the question, the answer and the
-**whole** cited page, and rules `correct` / `incorrect` / `insufficient`. Only
-`correct` serves; anything else escalates. An unreachable validator serves,
-because the fast answer already passed the deterministic evidence check.
+**Every branch has a way out**, so a wrong guess costs seconds rather than the
+answer. [Details](20-planner-agent.md#no-decision-is-final).
 
-**Measured:** turned a wrong *yes* into a correct *no* on a gold page for "Is 3M
-capital-intensive based on FY2022 data?" — a two-point swing on one question from
-the direction check alone.
+### 2. Read every page
 
-### 3. Derived-answer verification
+When the cheap tiers cannot prove an answer, the file is split into slices of 10
+pages, one reader agent per slice, eight at a time. Each reader may read only its
+own pages, so together they cover the whole file and no two can claim the same
+page.
 
-A computed figure is verified one level down, and all four conditions must hold:
-every input traces to the page it was read from; the arithmetic is re-run
-deterministically from the recorded expression; the numbers in that expression
-are the recorded inputs; and the result agrees with what the answer states.
+Readers read the stored Markdown, so they see **whole pages** — past the 2,500
+character embedding limit that hides 13% of the right evidence.
 
-**Measured:** Activision FY2019 fixed asset turnover — **24.26** against a gold
-of 24.26, cited page 69 of gold [68, 69], three inputs traced. Previously an
-abstention by construction.
+**Measured:** answered the registered-debt-securities question, whose evidence
+sits at character 45,234 of a 47,221-character page. Retrieval could never reach
+it.
 
-### 4. Partial findings
+But be careful about what that bought. On two questions the deep path found the
+**right page** and still gave a **wrong answer** — an over-inclusive list, and
+the wrong balance-sheet date. Reaching a page is not the same as reading it
+correctly.
 
-Non-overlapping slices buy independence and cost something: a question needing
-two statements gets a complete answer from nobody. A reader that cannot answer
-now hands over what it *did* read (`found: false, partial: true`, figures in
-`inputs` with their pages), and synthesis combines them — and may read any page
-itself to fill a gap.
+### 3. A second checker
 
-**Measured:** the FY2017-FY2019 average-capex-as-%-of-revenue question, which
-previously read all 126 pages and returned nothing, returns **1.9%** against a
-gold of 1.9%, cited to a gold page, from **six partials and zero complete
-findings**.
+A reader that did not write the answer sees the question, the answer, and the
+**whole** cited page. It rules correct, incorrect or insufficient. Only correct
+is served.
 
-### 5. Intent routing
+**Measured:** turned a wrong *yes* into a correct *no* on "is 3M
+capital-intensive?" — a two-point swing on one question, from checking whether the
+conclusion follows from the figures.
 
-Every message is classified before anything is retrieved. Common greetings match
-literally, with no model call. Ambiguity resolves toward the document, because
-answering a real question from nothing is the worse error. A conversational reply
-carries no citation and no verified badge, so it cannot be mistaken for something
-the filing proves.
+### 4. Proving computed answers
 
-### 6. Question decomposition
+An operating margin appears nowhere in a filing. Only the two figures behind it
+do. So a computed answer is proved one level down: every input traced to its page,
+the arithmetic re-run in Python, and the result matched against what the answer
+claims.
 
-A message asking several things becomes several questions, each retrieved,
-answered and **cited separately**. Composition is done in code, not by a model: a
-model asked to merge four answers rewrites their figures, and a figure that
-changes after verification is unverified again.
+**Measured:** Activision's FY2019 fixed asset turnover — **24.26** against a key
+of 24.26, cited to one of the two right pages. That was a guaranteed refusal
+before.
 
-### 7. Streaming progress and the activity feed
+### 5. Partial findings
 
-`POST /chat/stream` emits `stage` milestones, `trace` steps underneath them, then
-exactly one `answer` event. Two event types because the volumes differ by two
-orders of magnitude — a handful of milestones against several hundred steps.
+Some questions need figures from two statements, and those are usually in
+different readers' slices. Neither reader can answer; together they have
+everything.
 
-On a fast answer the checker is the only agent, and it originally made a single
-terminal call with no prose — so the panel was empty for exactly the path most
-answers take. It is now asked for one line on what it is checking, and the
-pipeline reports its lifecycle and its verdict. Measured:
+So a reader hands over what it *did* read, and the senior agent combines them.
 
-```text
-   8.1s  agent   [checker] running
-  13.6s  thought [checker] Checking that the $1,577 million figure comes from the FY2018 column…
-  13.6s  thought [checker] correct: The page's Consolidated Statement of Cash Flows shows "Purcha…
-  13.6s  agent   [checker] found
-```
+**Measured:** "FY2017–FY2019 average capex as a % of revenue" used to read all
+126 pages and return nothing. Now it returns **1.9%** against a key of 1.9%, from
+six partial findings and no complete ones.
 
-A `trace` is one of three real things: `thought` (text the model wrote of its own
-accord before a tool call), `tool` (the name, nothing else), `agent` (one agent's
-lifecycle — `running` → `found` / `partial` / `empty` / `failed`). The UI shows
-these in two panels, **collapsed by default**, so the default view stays calm and
-the detail is one click away.
+### 6. Splitting questions
 
-What streams is **progress, not tokens**. Verification runs after the model
-replies, so forwarding model tokens would put an unproven figure on screen. The
-answer text does animate in, but that is a **reveal of already-verified text**,
-not a live stream: instant under `prefers-reduced-motion`, instant for an answer
-already revealed once, and never replayed for history.
+A message asking several things becomes several questions, each searched and
+**cited separately**. The parts are joined in code, not by a model — a model asked
+to merge four answers rewrites their figures, and a figure that changes after
+verification is unverified again.
+
+### 7. Showing the work
+
+`POST /chat/stream` sends progress as it happens: which agent is running, what it
+said it was about to look for, which tool it called. The UI shows this in two
+panels, **collapsed by default**.
+
+What streams is **progress, not the answer**. The verifier runs after the model
+replies, so streaming the model's words would put an unproven figure on screen.
+The text does animate in, but that is a reveal of text that is already checked.
 
 Tool arguments and results never leave the process — a tool result is document
-text the verifier has not seen. Traces are also never persisted: they are
-progress, not evidence, so a reloaded thread shows the answer and its citations,
-which are the parts that have to survive.
+text the verifier has not seen.
 
-### 8. Evidence surfaces
+### 8. Evidence you can check
 
-A derived answer needs a different kind of proof, so the evidence rail gained a
-**"Computed, not quoted"** section: every input with the page it was read from,
-and the expression the verifier re-evaluated. An analyst asked to trust a number
-that no page contains has to be able to see where it came from.
+A computed answer needs a different kind of proof, so the evidence panel gained a
+**"Computed, not quoted"** section: every input with the page it came from, and
+the expression the verifier re-ran.
 
-Also: a `full read` badge when tier 3 answered, and a decline that says *"all 126
-pages were read in full by 13 agents"* rather than just "no match" — a much
-stronger statement of diligence.
+Also: a badge when the whole file was read, and a refusal that says "all 126 pages
+were read by 13 agents" rather than just "no match".
 
-### 9. Accent themes
+### 9. Choosing the colours
 
-The accent is chosen in Settings and stored per browser, defaulting to slate.
-Green, amber and red stay reserved for state. See
-[Design system](18-design-system.md).
+The accent colour is picked in Settings and stored per browser. Green, amber and
+red stay reserved for what the system proved, refused or failed to do. See [the
+design system](18-design-system.md).
 
 ---
 
 ## What it measured
 
-First 10 practice questions, same code and corpus, judged with
-`score.py --judge`:
+First 10 practice questions, same code, same corpus, graded with `--judge`:
 
-| | Fast path alone | Harness, first cut | Harness, after validating deep answers |
+| | Original pipeline | Harness, first attempt | Harness, after fixing the checker |
 |---|---:|---:|---:|
-| **Rubric score** | **+2** | **−1** | **+1** |
-| +1 correct answer and location | 3 | 3 | **4** |
-| 0 correct answer, wrong page | 2 | 2 | 2 |
-| 0 abstained | 4 | 1 | 1 |
-| **−1 confidently wrong** | **1** | **4** | **3** |
+| **Score** | **+2** | **−1** | **+1** |
+| Correct answer and page | 3 | 3 | **4** |
+| Correct answer, wrong page | 2 | 2 | 2 |
+| Refused | 4 | 1 | 1 |
+| **Wrong answers** | **1** | **4** | **3** |
 
-Read that honestly. **The first cut was three points worse than the pipeline it
-was meant to improve.** Removing a recall ceiling does not earn a mark; it earns
-the *opportunity* to answer, and an answer that is not right costs double. None
-of the four −1s was a fabrication — every figure traced to its cited page, and
-two of them landed on the correct gold page and were still wrong.
+Read that honestly. **The first attempt was three points worse than the pipeline
+it was meant to improve.** Reading more of a document does not earn a mark. It
+earns the *chance* to answer, and a wrong answer costs double.
 
-Validating deep answers recovered two points. It is still one point behind, for
-the same reason: the harness answers where the fast path abstained, and three of
-those are wrong.
+None of the four wrong answers was invented. Every figure traced to its cited
+page. Two of them landed on the **correct** page and were still wrong.
+
+Extending the checker to cover deep answers recovered two points. It is still one
+point behind, for the same reason: the harness answers where the old pipeline
+refused, and three of those answers are wrong.
 
 ## What is still wrong
 
 | | |
 |---|---|
-| **Abstention, not recall, is the next fix** | Two of the three remaining −1s are answers the system should have declined. |
-| **An answer that disclaims its own evidence** | One is served `found: true` while its text reads *"the provided excerpts do not report a quick ratio for Q2 FY2023"*. Catching that is deterministic, not a judgement. |
-| **The full 136 are not re-baselined** | Every number above is a 10-question sample. The standing +7 is tier 1 only. |
-| **Compound questions are under-scored** | The key gives one gold page per question; the harness returns one citation per part, so `score.py` reads the primary and ignores the rest. |
+| **Refusing better is what is left** | Two of the three remaining wrong answers should have been refusals |
+| **One answer disclaims its own evidence** | It is served as found while its text reads *"the provided excerpts do not report a quick ratio for Q2 FY2023"*. Catching that is a simple check, not a judgement |
+| **The full 136 have not been re-run** | Every number above is a 10-question sample. The +7 is the old pipeline only |
+| **Split questions are under-scored** | The key gives one right page per question; a split answer returns one citation per part, and the grader reads only the first |
 
-Tracked in [`../PLAN.md`](../PLAN.md).
+All tracked in [PLAN.md](../PLAN.md).
 
 ## What it costs
 
-Measured on the live stack, same question (`3M_2018_10K` FY2018 capex), before
-and after taking the router's model call off the critical path:
+Measured on the running app, same question, before and after taking the planner's
+predecessor off the critical path:
 
-| Stage | Before | After |
+| Step | Before | After |
 |---|---:|---:|
-| routing | **25.6s** | **0.1s** |
-| decomposing | 0.0s | 0.0s |
+| deciding what it needs | 25.6s | 0.1s |
 | retrieval + answer | 63.2s | 8.0s |
-| validation | 8.3s | 5.5s |
+| checking | 8.3s | 5.5s |
 | **total** | **97.2s** | **13.6s** |
 
-Routing was a full round trip to classify a message any of a few rules classify
-for free. The retrieval figure moved too, which is provider variance rather than
-a change — the same run measured 14.8s earlier in the day and 63s under load, so
-treat single measurements of provider latency with suspicion and the routing
-delta as the real one.
+Be sceptical of the middle row — that is provider variance, not a change. The
+same run measured 14.8s earlier in the day and 63s under load. The first row is
+the real improvement.
 
 | | Tier 1 | Tier 1+2 | Tier 3 |
 |---|---:|---:|---:|
-| Latency | ~3s | ~15s | 60-290s |
-| Model calls | 1 | 2-4 | 15-40 |
+| Time | ~3s | ~15s | 60–290s |
+| Model calls | 1 | 2–4 | 15–40 |
 | Relative cost | 1× | ~2× | ~50× |
-| Recall ceiling | 58% | 58% | **100%** |
-
-Tier 3 runs only when the cheaper tiers could not produce an answer that survived
-checking. The 290s figure is real — the partial-findings run over 126 pages,
-where synthesis also had to read pages to complete the picture.
+| Can it miss the page? | 42% | 42% | **never** |
 
 ## Tests
 
-256, all offline. `ScriptedChat` replays fixed tool-calling turns so the agent
-loop is reproducible; `tests/offline_harness.py` builds the real pipeline with
-its two model-calling collaborators stubbed, so the HTTP contract tests exercise
-the actual brain rather than a mock of it.
+281, all offline. Nothing needs a provider, a network or a document.
 
 ```bash
-PYTHONPATH=src pytest tests/test_agent_tools.py        # corpus, tools, calculator
-PYTHONPATH=src pytest tests/test_agent_runtime.py      # the loop, the reader, partials
-PYTHONPATH=src pytest tests/test_agent_verification.py # derived answers
-PYTHONPATH=src pytest tests/test_agent_pipeline.py     # tier boundaries
+PYTHONPATH=src pytest
 ```

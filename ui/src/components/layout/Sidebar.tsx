@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { FileStack, LogOut, MessageSquarePlus, Settings, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -13,8 +13,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const signOut = useAuthStore((state) => state.signOut)
   const load = useConversationStore((state) => state.load)
   const loaded = useConversationStore((state) => state.loaded)
-  const conversations = useConversationStore((state) =>
-    state.order.map((id) => state.conversations[id]).filter(Boolean),
+  // Subscribed as two stable slices and joined in a memo, rather than as one
+  // selector that maps over them. A selector returning a fresh array is compared
+  // by reference, so it reported a change on *every* store update — and the
+  // store now carries live progress, which updates many times a second.
+  const order = useConversationStore((state) => state.order)
+  const byId = useConversationStore((state) => state.conversations)
+  const conversations = useMemo(
+    () => order.map((id) => byId[id]).filter(Boolean),
+    [order, byId],
   )
   const remove = useConversationStore((state) => state.remove)
 

@@ -1,8 +1,9 @@
-import { Layers, ShieldCheck } from 'lucide-react'
+import { History, Layers, ShieldCheck } from 'lucide-react'
 import type { ChatResponse, TraceEvent } from '@/api/types'
 import { useRevealedText } from '@/hooks/useRevealedText'
 import { SubagentSummary } from './SubagentSummary'
 import { ThinkingTrail } from './ThinkingTrail'
+import { UsageStrip } from './UsageStrip'
 import { CitationChip } from '@/components/evidence/CitationChip'
 import { Tooltip } from '@/components/ui/Tooltip'
 
@@ -52,6 +53,16 @@ export function AnswerCard({
           Answer
         </span>
         <span className="flex items-center gap-2">
+          {result.recalled && (
+            <Tooltip
+              label="You asked this earlier in this conversation. This repeats that answer and its citation — the filing was not read again."
+            >
+              <span className="inline-flex items-center gap-1 rounded-full bg-surface-sunken px-2 py-0.5 text-2xs font-medium uppercase tracking-wide text-ink-muted">
+                <History className="h-3 w-3" />
+                from earlier
+              </span>
+            </Tooltip>
+          )}
           {result.mode === 'deep' && (
             <Tooltip
               label={`The first pass could not prove an answer, so all ${result.pages_read} pages were read by ${result.shards_run} agents.`}
@@ -100,6 +111,11 @@ export function AnswerCard({
             <ThinkingTrail traces={traces} />
           </div>
         )}
+
+        {/* Last on the card, deliberately. What the answer cost is a property
+            of the answer, not a headline — and a card that opened with a price
+            would put the cheapest thing on it first. */}
+        {result.usage && <UsageStrip usage={result.usage} className="mt-4" />}
 
         {/* A part that could not be proved is stated as such rather than
             quietly dropped: a half-answered question the reader thinks was

@@ -131,6 +131,7 @@ class ConversationService:
                 model=model,
                 retrieval=response["retrieval"] if response["retrieval"] else None,
                 result=response,
+                **_usage_columns(response.get("usage")),
             )
             session.add(message)
             # A thread created without a title takes it from the first question.
@@ -164,3 +165,23 @@ class ConversationService:
                 User(id=user_id, username=user_id, display_name=user_id)
             )
             session.flush()
+
+
+def _usage_columns(usage: Optional[dict]) -> dict:
+    """
+    The queryable slice of a usage report, for the message row.
+
+    `result` already holds the whole thing, so this is not the record -- it is
+    the part worth aggregating over ("what has this thread cost?") without
+    unwrapping JSON in SQL. An unpriced answer stores a null cost rather than a
+    zero, because "nobody configured a rate" and "it was free" are different
+    facts and only one of them should sum.
+    """
+    if not usage:
+        return {}
+    cost = usage.get("cost_usd")
+    return {
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cost_micro_usd": round(cost * 1_000_000) if cost is not None else None,
+    }

@@ -1,0 +1,36 @@
+{"message": "hi", "kind": "smalltalk", "note": "the case the planner exists for"}
+{"message": "thanks, that helps", "kind": "smalltalk"}
+{"message": "sorry, my bad", "kind": "smalltalk"}
+{"message": "good morning!", "kind": "smalltalk"}
+{"message": "who are you?", "kind": "capability"}
+{"message": "what can you do?", "kind": "capability"}
+{"message": "what file formats do you accept?", "kind": "capability"}
+{"message": "why did you say you couldn't find it?", "kind": "capability"}
+{"message": "how many documents do you have loaded?", "kind": "corpus_meta"}
+{"message": "which years do these filings cover?", "kind": "corpus_meta"}
+{"message": "how many pages does the 2018 10-K have?", "kind": "corpus_meta", "note": "the regression that killed the word-list router"}
+{"message": "what are the documents called?", "kind": "corpus_meta"}
+{"message": "do you have anything for 3M?", "kind": "corpus_meta"}
+{"message": "what was 3M's capital expenditure in FY2018?", "kind": "document", "documents": ["3M_2018_10K"]}
+{"message": "how many reportable segments does 3M have?", "kind": "document", "note": "'how many' is not corpus_meta"}
+{"message": "how many employees does it have?", "kind": "document"}
+{"message": "what does the company say about litigation risk?", "kind": "document"}
+{"message": "summarise the liquidity discussion", "kind": "document"}
+{"message": "how did operating margin move from 2018 to 2022?", "kind": "document", "documents": ["3M_2018_10K", "3M_2022_10K"], "note": "a comparison needs both"}
+{"message": "and the year before?", "history": "analyst: What was 3M's capital expenditure in FY2018?\nassistant: $1,577 million (page 60).", "kind": "document", "note": "only resolvable from history"}
+{"message": "is that up or down?", "history": "analyst: What was 3M's FY2022 revenue?\nassistant: $34.2 billion.", "kind": "document"}
+{"message": "hi, what was revenue in 2018?", "kind": "document", "note": "a greeting prefix is not small talk"}
+{"message": "ok", "kind": "smalltalk"}
+{"message": "tell me more", "history": "analyst: What drove the goodwill impairment?\nassistant: The health care reporting unit.", "kind": "document"}
+{"message": "what was that capex figure again?", "kind": "history", "recalls": true, "note": "the case recall exists for", "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "sorry, say that again", "kind": "history", "recalls": true, "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "remind me what 3M spent on capex in 2018", "kind": "history", "recalls": true, "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "is that up or down on the year before?", "kind": "document", "note": "a comparison was never made — recall must not derive it", "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "what about 2017?", "kind": "document", "note": "a year the thread never covered", "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "what was that headcount number again?", "kind": "document", "note": "asks to restate a turn that declined; there is nothing above to point at, so it is a fresh question", "turns": [{"role": "user", "content": "How many employees does 3M have?"}, {"role": "assistant", "content": "I could not find that in this filing.", "found": false, "page": null}]}
+{"message": "what was the 1st question?", "kind": "thread_meta", "note": "the reported bug: read 36 pages of a 10-K to answer this", "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "what was the last question?", "kind": "thread_meta", "turns": [{"role": "user", "content": "What was 3M's FY2018 capital expenditure?"}, {"role": "assistant", "content": "3M's FY2018 capital expenditure was $1,577 million.", "found": true, "page": 59, "doc_name": "3M_2018_10K"}]}
+{"message": "what did I just ask you?", "kind": "thread_meta"}
+{"message": "how many questions have I asked?", "kind": "thread_meta"}
+{"message": "what have we talked about so far?", "kind": "thread_meta"}
+{"message": "what was the first question?", "kind": "thread_meta", "note": "with nothing asked yet — must still be thread_meta, answered 'nothing yet'"}

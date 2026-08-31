@@ -1,41 +1,44 @@
-# Design system
+# The design system
 
-**Tokens:** [`ui/src/styles/globals.css`](../ui/src/styles/globals.css)
+**Tokens:** [`ui/src/styles/globals.css`](../ui/src/styles/globals.css) ·
 **Accents:** [`ui/src/lib/accents.ts`](../ui/src/lib/accents.ts)
-**Picker:** [`ui/src/components/settings/AppearanceCard.tsx`](../ui/src/components/settings/AppearanceCard.tsx)
 
-The colour system has one rule, and everything below follows from it.
+One rule, and everything follows from it.
 
----
+## Colour means something
 
-## The rule: colour means something
+Green, amber and red are **reserved for what the system did**. If something is
+green, the system proved it. If it is amber, the system refused. Nothing is those
+colours for decoration.
 
-`verified`, `declined`, `failed` and `building` are **reserved for state**. If
-something is green on a screen, it is because the system proved it. If it is
-amber, the system declined. Nothing is those colours for decoration.
+```mermaid
+flowchart TD
+    ROOT[":root — the light palette"] --> DARK[".dark — same names, new values"]
+    DARK --> ACC["[data-accent='slate'] — only the accent moves"]
+    ACC --> C[components]
+    C -->|"bg-accent, text-ink,<br/>border-line"| PAINT([what you see])
+    NOTE["components can only name tokens.<br/>there is no hex value in any component."] -.-> C
+```
 
-That is enforced structurally rather than by convention:
+That is enforced by structure, not by good intentions:
 
-- Every colour is a CSS variable, and Tailwind exposes only the semantic names.
-  There is **no hex value in any component** — verified by `grep`, and worth
-  re-checking if a component ever needs a colour the tokens do not have.
-- Semantic names never appear as decoration in a component. A `Badge` takes a
-  `tone`, not a colour.
+- Every colour is a CSS variable, and Tailwind exposes only the names. **There is
+  no hex value in any component** — checked with `grep`.
+- A `Badge` takes a `tone`, not a colour. So a component cannot paint something
+  green by accident.
 
-Light is the base; `.dark` overrides the same names. One token set, two themes.
-
-| Token | Meaning |
+| Token | Means |
 |---|---|
-| `canvas` / `surface` / `surface-raised` / `surface-sunken` | Elevation, back to front |
-| `line` / `line-strong` | Borders and dividers |
-| `ink` / `ink-muted` / `ink-subtle` | Text, three levels of emphasis |
-| `accent` / `accent-soft` / `accent-ink` | Interactive: buttons, chips, focus rings, the user's own messages |
-| `verified` | **The system proved this.** |
-| `declined` | **The system declined**, or a truncation the reader should know about |
+| `canvas`, `surface`, `surface-raised`, `surface-sunken` | Depth, back to front |
+| `line`, `line-strong` | Borders |
+| `ink`, `ink-muted`, `ink-subtle` | Text, three levels |
+| `accent`, `accent-soft`, `accent-ink` | Things you interact with |
+| `verified` | **The system proved this** |
+| `declined` | **The system refused**, or something was cut short |
 | `failed` | An error |
 | `building` | Indexing in progress |
 
----
+Light is the base. Dark redefines the same names. One set of names, two themes.
 
 ## Accent themes
 
@@ -50,12 +53,13 @@ The accent is chosen in Settings, stored per browser, and written to
 | **Graphite** | Near-black. The only colour left on screen then means something. |
 | **Indigo** | The original violet-blue, kept for anyone who preferred it. |
 
-### Why five and not a spectrum
+### Why five and not a whole spectrum
 
-Because of the rule. An accent near green, amber or red would read as a status,
-and a button the same colour as "verified" undoes the only guarantee the palette
-makes. What is left is the blues, the teals and the neutrals — which is also,
-not by coincidence, what professional financial tooling uses.
+Because of the rule. An accent near green, amber or red would look like a status.
+A button the same green as "verified" breaks the only promise the palette makes.
+
+That leaves blues, teals and neutrals — which is also what professional financial
+tools tend to use.
 
 Two of the themes also move `building`: the indexing badge is blue, and a blue
 accent beside it would be taken for the accent.
@@ -72,12 +76,12 @@ The colours live **only** in CSS, keyed on `[data-accent='…']` rather than on
 `:root`. `lib/accents.ts` carries the list, the names and the reasoning — no
 values.
 
-That buys something better than tidiness. Each swatch in the picker carries its
-own `data-accent`, so the themed tokens cascade into that subtree and the swatch
-paints in the **real tokens** of the theme it selects — including while a
-different accent is active. The alternative is a hex value copied into
-TypeScript, which is how a swatch ends up advertising a colour the app no longer
-uses.
+This is not just tidiness. Each swatch in the picker carries its own
+`data-accent`, so it paints in the **real colours** of the theme it selects — even
+while a different accent is active.
+
+The alternative is copying hex values into TypeScript, which is how a swatch ends
+up showing a colour the app no longer uses.
 
 ```css
 /* applies to <html data-accent="navy"> and to a swatch inside the picker */

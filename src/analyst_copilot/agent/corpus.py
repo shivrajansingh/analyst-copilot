@@ -399,7 +399,12 @@ class DocumentCorpus:
         return summary
 
     # -- sharding ----------------------------------------------------------- #
-    def shards(self, pages_per_shard: int = DEFAULT_PAGES_PER_SHARD) -> List[Shard]:
+    def shards(
+        self,
+        pages_per_shard: int = DEFAULT_PAGES_PER_SHARD,
+        only: Optional[Sequence[str]] = None,
+        excluding: Optional[Sequence[str]] = None,
+    ) -> List[Shard]:
         """
         Split the corpus into consecutive slices of at most `pages_per_shard`.
 
@@ -407,12 +412,21 @@ class DocumentCorpus:
         not have to ask "of which filing", and a slice that spans a year-end
         boundary is exactly where a model blends two fiscal years into one
         wrong figure.
+
+        `only` limits the sharding to named documents -- the planner's scope. On a
+        three-year filing set, "what was FY2018 revenue" has no business reading
+        the other two documents, and doing so triples the readers for nothing.
+
+        `excluding` is the other half of that: sharding what a scoped search
+        skipped, so a scope that turned out to be wrong can be widened rather
+        than costing the answer. A name in neither list is simply absent.
         """
         if pages_per_shard <= 0:
             raise ValueError("pages_per_shard must be positive")
 
+        wanted = self.scoped_documents(only=only, excluding=excluding)
         groups: List[List[PageMeta]] = []
-        for doc_name in self.available_documents():
+        for doc_name in wanted:
             pages = self.pages_of(doc_name)
             for start in range(0, len(pages), pages_per_shard):
                 groups.append(pages[start : start + pages_per_shard])
@@ -422,6 +436,38 @@ class DocumentCorpus:
             Shard(index=number, total=total, pages=group)
             for number, group in enumerate(groups, start=1)
         ]
+
+    def scoped_documents(
+        self,
+        only: Optional[Sequence[str]] = None,
+        excluding: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        """
+        Readable documents after a scope is applied, in corpus order.
+
+        A name in `only` that this corpus does not hold is ignored rather than
+        being an error: a scope is a hint from a planner reading filenames, and
+        it must not be able to break a search.
+        """
+        available = self.available_documents()
+        if only:
+            kept = [name for name in available if name in set(only)]
+            # An `only` list that matches nothing would silently search nothing at
+            # all, which is worse than ignoring it.
+            available = kept or available
+        if excluding:
+            available = [name for name in available if name not in set(excluding)]
+        return available
+
+    def page_counts(self) -> Dict[str, int]:
+        """Pages per document, for the planner's document cards."""
+        counts: Dict[str, int] = {}
+        for doc_name in self._doc_names:
+            try:
+                counts[doc_name] = len(self.pages_of(doc_name))
+            except DocumentUnavailable:
+                continue
+        return counts
 
     # -- internals ---------------------------------------------------------- #
     def _page_meta(self, doc_name: str, page_index: int) -> PageMeta:
