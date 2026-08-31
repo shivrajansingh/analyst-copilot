@@ -20,6 +20,7 @@ flowchart LR
 
 | Doc | What it covers |
 |---|---|
+| [One-page summary](summary.txt) | Plain text: what it does, how to run it, the gotchas |
 | **[What changed](17-enhancements.md)** | **Start here.** Every change, what it fixed, what it measured |
 | [The planner](20-planner-agent.md) | Deciding what a message needs, and the escape hatches |
 | [The agent harness](16-agent-harness.md) | The three tiers, the readers, the tools |

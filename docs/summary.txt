@@ -1,0 +1,176 @@
+ANALYST COPILOT - SHORT SUMMARY
+===============================
+
+A one-page overview. For full detail see the README and the numbered
+docs in this folder.
+
+
+1. WHAT IT DOES
+---------------
+
+You give it company filings. You ask a question in plain English. It
+answers, and it tells you which document and which page the answer came
+from.
+
+If the filing does not hold the answer, it says so: "not found in this
+filing." It never shows a figure it cannot point to on a page. A wrong
+number in a valuation is worse than no number.
+
+It reads PDF, HTML, Word, Excel, CSV, Markdown and plain text. Every
+file is turned into Markdown first, so tables stay tables and a figure
+keeps its year column.
+
+A question is answered in tiers. It stops at the first tier that can
+prove its answer, so most questions never reach the slow one.
+
+  Tier 1, about 3 seconds
+    Search the indexes, take the top 5 pages, ask the model, then check
+    the figures really appear on the page.
+
+  Tier 2, about 15 seconds
+    A second model reads the question, the answer and the whole cited
+    page. It catches the right figure for the wrong year, a segment
+    instead of a total, or half an answer to a two-part question.
+
+  Tier 3, 1 to 5 minutes
+    Only if tier 1 found nothing or tier 2 had doubts. The chosen files
+    are cut into slices of ten pages. One agent reads each slice, eight
+    at a time, so the whole document gets read. A senior agent then
+    picks which candidate to cite.
+
+Other things worth knowing:
+
+  - It talks. Type "hi" and you get a reply, not a search of a 10-K.
+    Every message is sorted before anything is searched.
+  - It only opens the files it needs. Ask about FY2018 across three
+    years and it searches one document. If that was the wrong guess, it
+    widens instead of giving up.
+  - It can prove arithmetic. An operating margin is nowhere in a
+    filing, only the two figures behind it. So it traces each input to
+    its page and re-runs the sum in Python.
+  - It shows its work. Progress streams as it happens: which agent is
+    running, what it is looking for, which tool it called.
+
+
+2. HOW TO RUN IT
+----------------
+
+First, set up the keys. This is required either way.
+
+    cp .env.example .env
+
+Then fill in .env. The three you must set:
+
+    OPENAI_URL, OPENAI_API_KEY, OPENAI_MODEL       the chat model
+    EMBEDDING_BASE_URL, EMBEDDING_API_KEY,
+    EMBEDDING_MODEL                                the embedding model
+    VALIDATOR_MODEL                                the tier 2 checker
+
+Chat and embeddings are separate models. OPENAI_MODEL is never used for
+embeddings. Setting VALIDATOR_MODEL is optional but recommended, see
+point 3 below.
+
+
+Option A - Docker (easiest)
+
+    docker compose -f docker-compose.yml up --build
+
+Open http://localhost:4006. The UI reaches the API through nginx, so the
+API port is not published to your machine. Your filings/ and storage/
+folders are mounted in, so uploads and indexes survive a restart.
+
+Note: "docker compose up" without the -f flag starts the development
+servers with hot reload instead.
+
+
+Option B - on your machine
+
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt pytest
+    export PYTHONPATH=src
+
+    python scripts/serve_api.py            # http://127.0.0.1:8000
+    cd ui && npm install && npm run dev    # http://localhost:5173
+
+The API's interactive docs are at /docs.
+
+
+Ask one question from the command line
+
+    python scripts/examples/ask.py filings/3M_2018_10K.htm \
+      "What is the FY2018 capital expenditure amount for 3M?"
+
+If that filing is not indexed yet, the script indexes it first. There is
+no separate bulk-indexing step anywhere - every entry point indexes what
+it needs, when it needs it.
+
+
+Score it against the practice key
+
+    PYTHONPATH=src python scripts/eval/run_practice.py
+    PYTHONPATH=src python scripts/eval/score.py \
+      --results data/eval-results.json --judge
+
+Add --limit 10 for a quick run, or --fast-only to run tier 1 by itself.
+Results are written after every question, so it is safe to interrupt.
+
+Tests:
+
+    PYTHONPATH=src pytest
+
+
+3. SPECIFIC POINTS
+------------------
+
+The filings are not in the repository. filings/ is 338 MB of 10-Ks that
+came with the challenge zip, and it is gitignored. A fresh clone has to
+unzip it before the tests or the eval scripts will run. The practice key
+itself, data/practice-questions.jsonl, IS committed.
+
+The tier 2 checker should be a different model. Set VALIDATOR_MODEL to
+something other than OPENAI_MODEL. The same model has the same blind
+spot twice: on the practice key it re-derived its own wrong formula,
+confirmed the arithmetic, and passed 9 of 11 wrong answers. Leave
+VALIDATOR_MODEL blank and the answering model checks its own work, which
+is barely a check. Naming the answering model counts as blank. The model
+must support tool calling.
+
+VALIDATOR_URL and VALIDATOR_API_KEY fall back to OPENAI_URL and
+OPENAI_API_KEY. A checker on the same gateway needs only its name.
+
+Costs are never guessed. Every answer reports the tokens it spent. It
+reports a dollar figure only when you configure a rate in .env
+(CHAT_PRICE_*, EMBEDDING_PRICE_INPUT, VALIDATOR_PRICE_*), or when the
+model's list price already ships in usage/pricing.py. Left unset, the UI
+says "no price configured". A gateway can put any model behind any name
+at any margin, so an invented cost is worse than none. Check the
+validator model in use at GET /api/v1/health.
+
+A "filing" is a set of documents, not one file. Retrieval ranks pages
+across every document in the filing. The answer still cites exactly one
+document. In the code these are called collections, because "filing"
+already means a single 10-K inside the pipeline.
+
+Page numbers move, evidence does not. The same document paginates
+differently as filed HTML and as the filer's own PDF - 15 of 62
+practice documents disagree by one or two pages. So the system looks for
+the page carrying the evidence and reports what it did: exact,
+adjusted, relocated or inferred. An answer is still only ever attached
+to a page whose own text supports its figures. Re-anchoring moves a
+citation, never an answer.
+
+A refusal is a success, not an error. Declining comes back as a normal
+HTTP 200 with "found": false and "evidence": null.
+
+Chat history needs Postgres. Inside docker compose this is wired up for
+you. Outside it, set DATABASE_URL. With no database the questions are
+still answered, just not recorded, and the /conversations endpoints
+return 503.
+
+Docker restart reuses the old image. After changing code, run
+"up --build -d", not "restart".
+
+Indexes rebuild themselves after a parser change. Indices record
+PARSER_VERSION, so stale ones report as absent instead of being quietly
+reused.
