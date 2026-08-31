@@ -417,6 +417,24 @@ async def _history(
     except DatabaseUnavailable:
         return []
     return [
-        {"role": message.role, "content": message.content}
+        {
+            "role": message.role,
+            "content": message.content,
+            # Carried so the recall step can tell a proved answer from an
+            # unproved one. Only a turn with `found` and a page may be restated,
+            # and it is restated under that page -- so the outcome has to travel
+            # with the text, not be re-derived from it.
+            "found": message.found,
+            "page": message.page,
+            "doc_name": _doc_name_of(message),
+        }
         for message in conversation.messages
     ]
+
+
+def _doc_name_of(message) -> str:
+    """Which document an earlier answer cited, if the stored result recorded one."""
+    result = getattr(message, "result", None)
+    if isinstance(result, dict):
+        return str(result.get("doc_name") or "")
+    return ""

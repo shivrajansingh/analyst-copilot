@@ -17,6 +17,8 @@ from analyst_copilot.agent.models import (
 )
 from analyst_copilot.agent.orchestrator import DeepResult, format_findings
 from analyst_copilot.agent.planner import PlanKind
+from analyst_copilot.agent.recall import HistoryTurn, Recollection
+from analyst_copilot.config.settings import get_settings
 from analyst_copilot.agent.decompose import QuestionDecomposer
 from analyst_copilot.agent.conversation import FALLBACK_REPLY, ConversationResponder
 from analyst_copilot.agent.pipeline import AnalystAgent
@@ -30,6 +32,8 @@ from offline_harness import (
     StubCollections,
     StubDeepSearch,
     StubPlanner,
+    StubRecaller,
+    StubResponder,
     StubValidator,
     build_agent,
 )
@@ -659,3 +663,200 @@ def test_an_unscoped_search_never_widens(markdown):
     agent.answer("What was FY2018 capex?", doc_name=DOC)
     assert len(deep.calls) == 1
     assert deep.scopes[0]["only"] == []
+
+
+# --- the third path: answering from the thread ------------------------------ #
+# A `history` plan is the only kind that gets a second opinion before it is
+# trusted. These pin both outcomes: a restatement that keeps the original
+# citation, and the fall-through that makes a wrong `history` cost one call.
+CAPEX_THREAD = [
+    {"role": "user", "content": "What was FY2018 capex?"},
+    {
+        "role": "assistant",
+        "content": "FY2018 capital expenditure was $1,577 million.",
+        "found": True,
+        "page": 59,
+        "doc_name": DOC,
+    },
+]
+
+
+def test_a_recalled_answer_is_served_without_searching(markdown):
+    qa = FakeQA()
+    deep = StubDeepSearch()
+    agent = build_agent(
+        qa,
+        deep=deep,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1,577 million.",
+                source=HistoryTurn(
+                    role="assistant",
+                    content="FY2018 capital expenditure was $1,577 million.",
+                    found=True,
+                    page=59,
+                    doc_name=DOC,
+                ),
+                reason="asked again",
+            )
+        ),
+    )
+    answer = agent.answer("what was that capex figure again?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert answer.found
+    assert answer.answer == "$1,577 million."
+    assert answer.recalled
+    assert qa.questions == [], "a restatement must not search the filing"
+    assert deep.calls == []
+
+
+def test_a_recalled_answer_carries_the_original_page(markdown):
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1,577 million.",
+                source=HistoryTurn("assistant", "…$1,577 million.", True, 59, DOC),
+            )
+        ),
+    )
+    answer = agent.answer("say that again", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert answer.citation is not None
+    assert answer.citation.page == 59
+    assert answer.citation.doc_name == DOC
+    assert answer.citations == [answer.citation]
+
+
+def test_a_failed_recall_falls_through_to_the_search(markdown):
+    qa = FakeQA()
+    recaller = StubRecaller()  # declines
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=recaller,
+    )
+    answer = agent.answer("what was FY2017 capex?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert recaller.calls, "recall must be consulted before the search"
+    assert qa.questions, "a history plan that recalls nothing must still be searched"
+    assert not answer.recalled
+
+
+def test_recall_sees_the_untruncated_thread(markdown):
+    recaller = StubRecaller()
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=recaller,
+    )
+    agent.answer("what was that again?", doc_name=DOC, history=CAPEX_THREAD)
+
+    _, seen = recaller.calls[0]
+    assert seen == CAPEX_THREAD, "recall needs the stored turns, not the trimmed context"
+
+
+def test_recall_can_be_switched_off(markdown):
+    qa = FakeQA()
+    recaller = StubRecaller()
+    settings = get_settings()
+    agent = AnalystAgent(
+        qa_service=qa,
+        chat_client=None,
+        collection_indexer=StubCollections([DOC]),
+        settings=settings.model_copy(update={"planner_recall_history": False}),
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        decomposer=QuestionDecomposer(None),
+        validator=StubValidator(),
+        orchestrator=StubDeepSearch(),
+        responder=ConversationResponder(None),
+        recaller=recaller,
+    )
+    agent.answer("what was that again?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert recaller.calls == [], "the thread must not be consulted when recall is off"
+    assert qa.questions, "the message is searched like any other question"
+
+
+def test_an_ordinary_question_never_consults_the_thread(markdown):
+    recaller = StubRecaller()
+    agent = build_agent(FakeQA(), ready_documents=[DOC], recaller=recaller)
+    agent.answer("What was capex?", doc_name=DOC, history=CAPEX_THREAD)
+    assert recaller.calls == []
+
+
+# --- questions about the conversation itself -------------------------------- #
+# "what was the first question?" cannot be answered by any filing. Reading every
+# page to fail is the worst outcome the planner can produce, so this path is the
+# one place the NEEDS_DOCUMENT escape is deliberately not honoured.
+def test_a_question_about_the_thread_never_searches(markdown):
+    qa = FakeQA()
+    deep = StubDeepSearch()
+    agent = build_agent(
+        qa, deep=deep, ready_documents=[DOC], planner=StubPlanner(kind=PlanKind.THREAD_META)
+    )
+    answer = agent.answer("what was the 1st question?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert qa.questions == [], "the filing must not be searched for what was typed"
+    assert deep.calls == []
+    assert answer.mode is AnswerMode.CONVERSATIONAL
+    assert answer.intent is Intent.CAPABILITY
+
+
+def test_an_empty_thread_says_nothing_was_asked(markdown):
+    responder = StubResponder()  # echoes the facts it is given
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.THREAD_META),
+        responder=responder,
+    )
+    answer = agent.answer("what was the last question?", doc_name=DOC, history=[])
+    assert "No question has been asked yet" in answer.answer
+
+
+def test_the_thread_facts_name_the_first_question(markdown):
+    responder = StubResponder()
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.THREAD_META),
+        responder=responder,
+    )
+    agent.answer("what was the 1st question?", doc_name=DOC, history=CAPEX_THREAD)
+    assert 'The first question was: "What was FY2018 capex?"' in responder.facts[0]
+
+
+def test_a_thread_question_that_asks_for_the_document_is_still_not_searched(markdown):
+    """The escape hatch is refused here: no filing can hold the transcript."""
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.THREAD_META),
+        responder=StubResponder(needs_document=True),
+    )
+    answer = agent.answer("what did I just ask?", doc_name=DOC, history=CAPEX_THREAD)
+    assert qa.questions == []
+    assert "What was FY2018 capex?" in answer.answer
+
+
+def test_a_corpus_question_keeps_its_escape(markdown):
+    """Only thread_meta loses the escape — corpus_meta can still hand back."""
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.CORPUS_META),
+        responder=StubResponder(needs_document=True),
+    )
+    agent.answer("how many segments does it report?", doc_name=DOC)
+    assert qa.questions, "a corpus_meta message that needs the filing must reach it"

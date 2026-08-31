@@ -31,6 +31,9 @@ export function normalizeChatResponse(raw: ChatResponse | null | undefined): Cha
     validation: value.validation ?? null,
     pages_read: value.pages_read ?? 0,
     shards_run: value.shards_run ?? 0,
+    // False rather than undefined: an answer stored before recall existed was
+    // read from the filing, which is exactly what false means.
+    recalled: value.recalled ?? false,
     // Null rather than a zeroed report: an answer served before this existed
     // was not free, its cost was never recorded, and a row of zeros would
     // claim otherwise.

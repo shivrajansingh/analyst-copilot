@@ -373,6 +373,12 @@ export interface ChatResponse {
   pages_read: number
   /** Reader agents used by the deep path. 0 when it did not run. */
   shards_run: number
+  /**
+   * True when this restates an answer from earlier in the thread rather than
+   * reading the filing again. The evidence is the original answer's citation,
+   * so the page still proves the figure — but nothing was re-read.
+   */
+  recalled: boolean
 }
 
 export interface ConversationSummary {

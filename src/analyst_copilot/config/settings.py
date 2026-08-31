@@ -154,6 +154,11 @@ class Settings(BaseSettings):
     # search found nothing. This is what makes a wrong scope cost time instead of
     # the answer, and turning it off removes the safety net entirely.
     planner_widen_on_empty: bool = True
+    # Let the planner answer from earlier in the thread. A message classified
+    # `history` gets one extra call that either restates a proved answer -- under
+    # that answer's own citation -- or declines, after which the filing is
+    # searched normally. Off skips the call and searches every time.
+    planner_recall_history: bool = True
 
     # How far a citation may be moved to land on the page that actually carries
     # the evidence. Two readings of the same document -- filed HTML vs the

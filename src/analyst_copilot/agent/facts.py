@@ -91,3 +91,78 @@ def _unique(values) -> List[str]:
 
 def _join_numbers(values: Sequence[int]) -> str:
     return ", ".join(str(value) for value in values)
+
+
+def thread_facts(history: Sequence[dict]) -> str:
+    """
+    Facts about this conversation, computed rather than read.
+
+    The transcript analogue of `corpus_facts`, and it exists for the same reason:
+    "what was the first question?" has an exact answer sitting in a list of rows,
+    and answering it by reading 36 pages of a 10-K is the same category of mistake
+    as counting documents by searching them.
+
+    The same rule applies -- everything here is computed in Python and the model's
+    only job is to say it in a sentence. It must not count the turns itself, and
+    it has nothing to quote if it tries: the numbering is supplied.
+
+    `history` excludes the message being answered, because the exchange is
+    recorded only after the answer exists. So "the last question" means the one
+    before this one, which is what an analyst means by it.
+    """
+    asked = [
+        str(turn.get("content") or "").strip()
+        for turn in history or []
+        if turn.get("role") == "user" and str(turn.get("content") or "").strip()
+    ]
+    if not asked:
+        return (
+            "Questions asked so far in this conversation: 0\n"
+            "No question has been asked yet in this conversation — the message "
+            "being answered now is the first one. There is no earlier question to "
+            "report, and nothing in any document can supply one."
+        )
+
+    lines: List[str] = [f"Questions asked so far in this conversation: {len(asked)}"]
+    lines.append(f'The first question was: "{asked[0]}"')
+    if len(asked) > 1:
+        lines.append(f'The most recent question before this one was: "{asked[-1]}"')
+    else:
+        lines.append(
+            "There has been only one question before this one, so it is both the "
+            "first and the most recent."
+        )
+    lines.append("")
+    lines.append("Every question asked, in order:")
+    for index, question in enumerate(asked, start=1):
+        lines.append(f'  {index}. "{question}"')
+    return "\n".join(lines)
+
+
+def thread_summary(history: Sequence[dict]) -> str:
+    """
+    The transcript answered in a sentence, with no model involved.
+
+    The last resort for a `thread_meta` message: if the conversational reply asks
+    for the document -- which no filing can satisfy -- this answers from the same
+    computed facts rather than reading 189 pages to fail.
+    """
+    asked = [
+        str(turn.get("content") or "").strip()
+        for turn in history or []
+        if turn.get("role") == "user" and str(turn.get("content") or "").strip()
+    ]
+    if not asked:
+        return (
+            "You have not asked anything yet in this conversation — this is your "
+            "first message. Ask me about a figure, a policy or a trend in the "
+            "selected filing and I will go and look."
+        )
+    parts = [
+        f"You have asked {len(asked)} question{'' if len(asked) == 1 else 's'} "
+        f"in this conversation so far."
+    ]
+    parts.append(f'The first was: "{asked[0]}"')
+    if len(asked) > 1:
+        parts.append(f'The most recent before this one was: "{asked[-1]}"')
+    return " ".join(parts)

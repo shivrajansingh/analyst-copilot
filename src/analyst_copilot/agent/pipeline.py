@@ -45,8 +45,8 @@ from typing import Callable, Dict, List, Optional, Sequence
 from analyst_copilot import usage as metering
 from analyst_copilot.agent.cancellation import CancelToken, Cancelled, token_or_never
 from analyst_copilot.agent.cards import DocumentCard, cards_for
-from analyst_copilot.agent.conversation import ConversationResponder
-from analyst_copilot.agent.facts import corpus_facts
+from analyst_copilot.agent.conversation import ConversationReply, ConversationResponder
+from analyst_copilot.agent.facts import corpus_facts, thread_facts, thread_summary
 from analyst_copilot.agent.corpus import DocumentCorpus, DocumentUnavailable
 from analyst_copilot.agent.decompose import QuestionDecomposer
 from analyst_copilot.agent.models import (
@@ -62,6 +62,7 @@ from analyst_copilot.agent.models import (
 from analyst_copilot.agent.orchestrator import DeepSearchOrchestrator
 from analyst_copilot.agent.prompts import format_history
 from analyst_copilot.agent.planner import Plan, PlanKind, Planner
+from analyst_copilot.agent.recall import HistoryAnswerer
 from analyst_copilot.agent.validator import AnswerValidator, Validation, Verdict
 from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.verification import verify_agent_answer
@@ -142,6 +143,7 @@ class AnalystAgent:
         validator: Optional[AnswerValidator] = None,
         orchestrator: Optional[DeepSearchOrchestrator] = None,
         responder: Optional[ConversationResponder] = None,
+        recaller: Optional[HistoryAnswerer] = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._qa = qa_service or QuestionAnsweringService()
@@ -152,6 +154,7 @@ class AnalystAgent:
         self._validator = validator
         self._orchestrator = orchestrator
         self._responder = responder
+        self._recaller = recaller
 
     # -- lazily built collaborators ----------------------------------------- #
     def _chat(self) -> ChatClient:
@@ -205,6 +208,11 @@ class AnalystAgent:
         if self._responder is None:
             self._responder = ConversationResponder(self._chat())
         return self._responder
+
+    def _recall(self) -> HistoryAnswerer:
+        if self._recaller is None:
+            self._recaller = HistoryAnswerer(self._chat())
+        return self._recaller
 
     # -- entry point -------------------------------------------------------- #
     def answer(
@@ -265,9 +273,38 @@ class AnalystAgent:
         with metering.stage(Stage.PLANNING.value, "Understood the question"):
             plan = self._decide(message, cards, context, on_trace)
 
+        if plan.kind is PlanKind.HISTORY and self._settings.planner_recall_history:
+            recalled = self._answer_from_history(
+                message, plan, scope, history or [], on_stage, on_trace
+            )
+            if recalled is not None:
+                return recalled
+            # Nothing in the thread answered it. This is the expected outcome
+            # more often than not, and it costs one call before the ordinary
+            # search runs -- which is why recall is only ever allowed to restate.
+            plan = Plan(
+                kind=PlanKind.DOCUMENT,
+                question=plan.question,
+                documents=plan.documents,
+                confidence=plan.confidence,
+                reason="not already answered in this thread; searching the filing",
+            )
+            tracing.emit(on_trace, tracing.thought("planner", plan.reason))
+
+        if plan.kind is PlanKind.HISTORY:
+            # Recall is switched off, so the thread is not consulted and the
+            # message is searched like any other question.
+            plan = Plan(
+                kind=PlanKind.DOCUMENT,
+                question=plan.question,
+                documents=plan.documents,
+                confidence=plan.confidence,
+                reason="recall disabled; searching the filing",
+            )
+
         if not plan.kind.needs_documents:
             answered = self._answer_without_documents(
-                message, plan, scope, cards, context, on_stage, on_trace
+                message, plan, scope, cards, context, history or [], on_stage, on_trace
             )
             if answered is not None:
                 return answered
@@ -363,6 +400,7 @@ class AnalystAgent:
         scope: Scope,
         cards: Sequence[DocumentCard],
         context: str,
+        history: Sequence[dict],
         on_stage: Optional[StageCallback],
         on_trace: Optional[tracing.TraceCallback],
     ) -> Optional[AgentAnswer]:
@@ -374,11 +412,14 @@ class AnalystAgent:
         about the document *set* gets pre-computed facts and is forbidden from
         calculating from them, because there is no verifier on this path.
         """
-        facts = (
-            corpus_facts(cards, scope.collection or scope.doc_name or "")
-            if plan.kind is PlanKind.CORPUS_META
-            else ""
-        )
+        # Pre-computed answers for the two kinds that ask *about* something
+        # rather than *from* it. Both are counted in Python; the prompt forbids
+        # the model from working either out, because nothing verifies this path.
+        facts = ""
+        if plan.kind is PlanKind.CORPUS_META:
+            facts = corpus_facts(cards, scope.collection or scope.doc_name or "")
+        elif plan.kind is PlanKind.THREAD_META:
+            facts = thread_facts(history)
         with metering.stage("conversational", "Answered directly"):
             reply = self._conversation().reply(
                 message,
@@ -387,9 +428,15 @@ class AnalystAgent:
                 history=context,
                 facts=facts,
             )
-        if reply.needs_document:
+        if reply.needs_document and plan.kind is not PlanKind.THREAD_META:
             _emit(on_stage, StageEvent(Stage.PLANNING, "this needs the filing after all"))
             return None
+        if reply.needs_document:
+            # A question about the transcript asked for the document. No filing
+            # holds what the analyst typed, so honouring the escape here would
+            # read every page to fail. Answer from the facts instead.
+            logger.warning("thread_meta reply asked for the document; answering from the thread")
+            reply = ConversationReply(text=thread_summary(history))
 
         _emit(on_stage, StageEvent(Stage.DONE, "replied"))
         return AgentAnswer(
@@ -405,6 +452,68 @@ class AnalystAgent:
             collection=scope.collection,
             searched_documents=0,
             validation=plan.reason or None,
+        )
+
+    # -- recall -------------------------------------------------------------- #
+    def _answer_from_history(
+        self,
+        message: str,
+        plan: Plan,
+        scope: Scope,
+        history: Sequence[dict],
+        on_stage: Optional[StageCallback],
+        on_trace: Optional[tracing.TraceCallback],
+    ) -> Optional[AgentAnswer]:
+        """
+        Restate an answer this thread already proved, or hand the message back.
+
+        Returns None whenever the thread cannot answer it, which is the common
+        case and not a failure -- the caller then searches normally. The citation
+        is the source turn's own, never a new one: the page shown is a page that
+        was retrieved and verified when the figure was first produced.
+        """
+        _emit(on_stage, StageEvent(Stage.PLANNING, "checking what we already covered"))
+        with metering.stage("recall", "Checked the conversation"):
+            recollection = self._recall().recall(message, history)
+
+        if not recollection.found or recollection.source is None:
+            tracing.emit(
+                on_trace,
+                tracing.thought("recall", recollection.reason or "not answered in this thread"),
+            )
+            return None
+
+        source = recollection.source
+        tracing.emit(
+            on_trace,
+            tracing.thought("recall", recollection.reason or "restated an earlier answer"),
+        )
+        citation = Citation(
+            doc_name=source.doc_name or scope.doc_name or "",
+            page=source.page or 0,
+            label=f"page {(source.page or 0) + 1}",
+            # The snippet is the earlier answer, not page text. Nothing was read
+            # on this path, and inventing a quotation from a page we did not open
+            # is exactly the dishonesty the citation exists to prevent.
+            snippet=source.content,
+        )
+        _emit(on_stage, StageEvent(Stage.DONE, "answered from earlier in this conversation"))
+        return AgentAnswer(
+            question=message,
+            answer=recollection.answer,
+            found=True,
+            mode=AnswerMode.FAST,
+            intent=_intent_of(PlanKind.DOCUMENT),
+            doc_name=citation.doc_name,
+            collection=scope.collection,
+            searched_documents=0,
+            citation=citation,
+            citations=[citation],
+            recalled=True,
+            validation=(
+                "Restated from earlier in this conversation, with that answer's "
+                "original citation. Nothing was re-read."
+            ),
         )
 
     # -- planning ----------------------------------------------------------- #
@@ -926,13 +1035,14 @@ def _intent_of(kind: PlanKind) -> Intent:
     The plan's kind as the wire's `intent`.
 
     The API has reported three intents since before the planner existed, and
-    `corpus_meta` is a fourth. It maps onto `capability` because that is what it
-    is from a caller's point of view -- a question about the assistant's holdings,
-    answered without citing a document.
+    `corpus_meta` and `thread_meta` are later additions. Both map onto
+    `capability` because that is what they are from a caller's point of view -- a
+    question about the assistant's holdings or about the session itself, answered
+    without citing a document.
     """
     if kind is PlanKind.SMALLTALK:
         return Intent.SMALLTALK
-    if kind in (PlanKind.CAPABILITY, PlanKind.CORPUS_META):
+    if kind in (PlanKind.CAPABILITY, PlanKind.CORPUS_META, PlanKind.THREAD_META):
         return Intent.CAPABILITY
     return Intent.DOCUMENT_QUESTION
 

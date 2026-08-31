@@ -49,6 +49,7 @@ data/*
 !data/README.md
 !data/practice-questions.jsonl
 !data/questions-by-doc.json
+!data/planner-cases.jsonl
 
 # Codebase review notes and dry-run model output — a snapshot of one session,
 # not something later commits should keep re-stating.
