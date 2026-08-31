@@ -153,7 +153,12 @@
     -moz-osx-font-smoothing: grayscale;
     position: relative;
     min-height: 100%;
-    background-color: var(--surface-sunken);
+    /* The tokens above are bare HSL triplets, not colours -- Tailwind wraps
+       them as `hsl(var(--token) / <alpha-value>)`. Used raw this reads
+       `background-color: 220 24% 96%`, which is invalid, so the browser drops
+       it. With `body` transparent and `bg-canvas` gone from AppShell, nothing
+       else paints the page: dark mode fell back to the browser's white. */
+    background-color: hsl(var(--surface-sunken));
   }
   html::before {
     content: "";
