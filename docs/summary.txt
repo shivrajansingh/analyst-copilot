@@ -19,24 +19,6 @@ answers and cites the document and page. If the filing does not hold the
 answer, it says "not found in this filing" - it never shows a figure it
 cannot point to on a page.
 
-Reads PDF, HTML, Word, Excel, CSV, Markdown and text. All converted to
-Markdown first, so tables stay tables.
-
-It answers in tiers and stops at the first one that can prove itself:
-
-  Tier 1  ~3s     Search indexes, top 5 pages, ask the model, check the
-                  figures are really on the page.
-  Tier 2  ~15s    A second model re-reads the question, answer and whole
-                  page. Catches right figure / wrong year.
-  Tier 3  1-5min  Only if tier 1 found nothing or tier 2 doubted it.
-                  Files cut into 10-page slices, one agent each, eight
-                  at a time, so everything gets read.
-
-Also: it chats (type "hi", get a reply, not a search). It opens only the
-files it needs, and widens if that guess was wrong. It proves arithmetic
-by tracing each input to its page and re-running the sum in Python. It
-streams its progress as it works.
-
 
 2. HOW TO RUN IT
 ----------------
@@ -45,16 +27,11 @@ streams its progress as it works.
 
 Required: OPENAI_URL / _API_KEY / _MODEL (chat) and EMBEDDING_BASE_URL /
 _API_KEY / _MODEL (embeddings). These are separate models - OPENAI_MODEL
-is never used for embeddings. VALIDATOR_MODEL is optional but strongly
-recommended, see part 3.
+is never used for embeddings.
 
 Docker (easiest):
 
     docker compose -f docker-compose.yml up --build     # localhost:4006
-
-The API port is not published; the browser reaches it through nginx.
-filings/ and storage/ are mounted, so uploads survive a restart. Drop
-the -f flag and you get dev servers with hot reload instead.
 
 Local:
 
@@ -67,22 +44,18 @@ Local:
 Using the UI (first run):
 
   1. Sign in, then open FILINGS in the sidebar.
-  2. Type a name under "New filing" and hit Create. A filing is a folder
-     for related documents - "Boeing 2020-2023", not a single file.
-  3. Open that filing and add documents: drag them onto the dropzone,
-     pick them from disk, or fetch one by URL. HTML, PDF, Word, Excel,
-     CSV, Markdown and text all work.
-  4. Indexing starts on its own. Each document shows its progress:
-     queued, parsing, embedding, saving, ready.
-  5. Once one document is ready, go to CHAT, pick that filing from the
-     picker, and ask. Answers cite the document and page they came
-     from. A conversation stays pinned to the filing it started in.
+  2. Type a name under "New filing" and hit Create. A filing is a
+     folder for related documents, not a single file.
+  3. Open it and add documents - drag them in, pick them from disk, or
+     fetch one by URL. HTML, PDF, Word, Excel, CSV and text all work.
+  4. Indexing starts on its own: queued, parsing, embedding, saving,
+     ready.
+  5. Once one document is ready, go to CHAT, pick that filing, and ask.
+     A conversation stays pinned to the filing it started in.
 
-One question, one filing:
+From the command line instead:
 
     python scripts/examples/ask.py filings/3M_2018_10K.htm "FY2018 capex?"
-
-Indexing happens on demand - there is no bulk-index step anywhere.
 
 Score and test:
 
@@ -90,8 +63,6 @@ Score and test:
     PYTHONPATH=src python scripts/eval/score.py \
         --results data/eval-results.json --judge
     PYTHONPATH=src pytest
-
-Results are written after every question, so runs are safe to interrupt.
 
 
 3. SPECIFIC POINTS
@@ -102,8 +73,6 @@ other than OPENAI_MODEL. One model has the same blind spot twice: it
 re-derived its own wrong formula.
 
 Page numbers move, evidence does not. HTML and PDF of the same document
-paginate differently (15 of 62 practice docs disagree by 1-2 pages), so
-the system finds the page holding the evidence and reports how: exact,
-adjusted, relocated or inferred. It never changes the answer.
-
-
+paginate differently, so the system finds the page holding the evidence
+and reports how: exact, adjusted, relocated or inferred. It never
+changes the answer.
