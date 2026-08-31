@@ -1,176 +1,121 @@
 ANALYST COPILOT - SHORT SUMMARY
 ===============================
 
-A one-page overview. For full detail see the README and the numbered
-docs in this folder.
+  +--------------------------------------------------------------+
+  |                                                              |
+  |   >>>  LIVE DEMO                                             |
+  |        https://analyst-copilot.technicalheist.com/           |
+  |                                                              |
+  +--------------------------------------------------------------+
+
+Full detail: the README and the numbered docs in this folder.
 
 
 1. WHAT IT DOES
 ---------------
 
 You give it company filings. You ask a question in plain English. It
-answers, and it tells you which document and which page the answer came
-from.
+answers and cites the document and page. If the filing does not hold the
+answer, it says "not found in this filing" - it never shows a figure it
+cannot point to on a page.
 
-If the filing does not hold the answer, it says so: "not found in this
-filing." It never shows a figure it cannot point to on a page. A wrong
-number in a valuation is worse than no number.
+Reads PDF, HTML, Word, Excel, CSV, Markdown and text. All converted to
+Markdown first, so tables stay tables.
 
-It reads PDF, HTML, Word, Excel, CSV, Markdown and plain text. Every
-file is turned into Markdown first, so tables stay tables and a figure
-keeps its year column.
+It answers in tiers and stops at the first one that can prove itself:
 
-A question is answered in tiers. It stops at the first tier that can
-prove its answer, so most questions never reach the slow one.
+  Tier 1  ~3s     Search indexes, top 5 pages, ask the model, check the
+                  figures are really on the page.
+  Tier 2  ~15s    A second model re-reads the question, answer and whole
+                  page. Catches right figure / wrong year.
+  Tier 3  1-5min  Only if tier 1 found nothing or tier 2 doubted it.
+                  Files cut into 10-page slices, one agent each, eight
+                  at a time, so everything gets read.
 
-  Tier 1, about 3 seconds
-    Search the indexes, take the top 5 pages, ask the model, then check
-    the figures really appear on the page.
-
-  Tier 2, about 15 seconds
-    A second model reads the question, the answer and the whole cited
-    page. It catches the right figure for the wrong year, a segment
-    instead of a total, or half an answer to a two-part question.
-
-  Tier 3, 1 to 5 minutes
-    Only if tier 1 found nothing or tier 2 had doubts. The chosen files
-    are cut into slices of ten pages. One agent reads each slice, eight
-    at a time, so the whole document gets read. A senior agent then
-    picks which candidate to cite.
-
-Other things worth knowing:
-
-  - It talks. Type "hi" and you get a reply, not a search of a 10-K.
-    Every message is sorted before anything is searched.
-  - It only opens the files it needs. Ask about FY2018 across three
-    years and it searches one document. If that was the wrong guess, it
-    widens instead of giving up.
-  - It can prove arithmetic. An operating margin is nowhere in a
-    filing, only the two figures behind it. So it traces each input to
-    its page and re-runs the sum in Python.
-  - It shows its work. Progress streams as it happens: which agent is
-    running, what it is looking for, which tool it called.
+Also: it chats (type "hi", get a reply, not a search). It opens only the
+files it needs, and widens if that guess was wrong. It proves arithmetic
+by tracing each input to its page and re-running the sum in Python. It
+streams its progress as it works.
 
 
 2. HOW TO RUN IT
 ----------------
 
-First, set up the keys. This is required either way.
+    cp .env.example .env      # then fill in the keys
 
-    cp .env.example .env
+Required: OPENAI_URL / _API_KEY / _MODEL (chat) and EMBEDDING_BASE_URL /
+_API_KEY / _MODEL (embeddings). These are separate models - OPENAI_MODEL
+is never used for embeddings. VALIDATOR_MODEL is optional but strongly
+recommended, see part 3.
 
-Then fill in .env. The three you must set:
+Docker (easiest):
 
-    OPENAI_URL, OPENAI_API_KEY, OPENAI_MODEL       the chat model
-    EMBEDDING_BASE_URL, EMBEDDING_API_KEY,
-    EMBEDDING_MODEL                                the embedding model
-    VALIDATOR_MODEL                                the tier 2 checker
+    docker compose -f docker-compose.yml up --build     # localhost:4006
 
-Chat and embeddings are separate models. OPENAI_MODEL is never used for
-embeddings. Setting VALIDATOR_MODEL is optional but recommended, see
-point 3 below.
+The API port is not published; the browser reaches it through nginx.
+filings/ and storage/ are mounted, so uploads survive a restart. Drop
+the -f flag and you get dev servers with hot reload instead.
 
+Local:
 
-Option A - Docker (easiest)
-
-    docker compose -f docker-compose.yml up --build
-
-Open http://localhost:4006. The UI reaches the API through nginx, so the
-API port is not published to your machine. Your filings/ and storage/
-folders are mounted in, so uploads and indexes survive a restart.
-
-Note: "docker compose up" without the -f flag starts the development
-servers with hot reload instead.
-
-
-Option B - on your machine
-
-    python -m venv .venv
-    source .venv/bin/activate
+    python -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt pytest
     export PYTHONPATH=src
+    python scripts/serve_api.py             # :8000, docs at /docs
+    cd ui && npm install && npm run dev     # :5173
 
-    python scripts/serve_api.py            # http://127.0.0.1:8000
-    cd ui && npm install && npm run dev    # http://localhost:5173
+One question, one filing:
 
-The API's interactive docs are at /docs.
+    python scripts/examples/ask.py filings/3M_2018_10K.htm "FY2018 capex?"
 
+Indexing happens on demand - there is no bulk-index step anywhere.
 
-Ask one question from the command line
+Score and test:
 
-    python scripts/examples/ask.py filings/3M_2018_10K.htm \
-      "What is the FY2018 capital expenditure amount for 3M?"
-
-If that filing is not indexed yet, the script indexes it first. There is
-no separate bulk-indexing step anywhere - every entry point indexes what
-it needs, when it needs it.
-
-
-Score it against the practice key
-
-    PYTHONPATH=src python scripts/eval/run_practice.py
+    PYTHONPATH=src python scripts/eval/run_practice.py    # --limit 10
     PYTHONPATH=src python scripts/eval/score.py \
-      --results data/eval-results.json --judge
-
-Add --limit 10 for a quick run, or --fast-only to run tier 1 by itself.
-Results are written after every question, so it is safe to interrupt.
-
-Tests:
-
+        --results data/eval-results.json --judge
     PYTHONPATH=src pytest
+
+Results are written after every question, so runs are safe to interrupt.
 
 
 3. SPECIFIC POINTS
 ------------------
 
-The filings are not in the repository. filings/ is 338 MB of 10-Ks that
-came with the challenge zip, and it is gitignored. A fresh clone has to
-unzip it before the tests or the eval scripts will run. The practice key
-itself, data/practice-questions.jsonl, IS committed.
+Filings are not in the repo. filings/ is 338 MB from the challenge zip
+and is gitignored; unzip it or the tests and eval scripts will not run.
+data/practice-questions.jsonl IS committed.
 
-The tier 2 checker should be a different model. Set VALIDATOR_MODEL to
-something other than OPENAI_MODEL. The same model has the same blind
-spot twice: on the practice key it re-derived its own wrong formula,
-confirmed the arithmetic, and passed 9 of 11 wrong answers. Leave
-VALIDATOR_MODEL blank and the answering model checks its own work, which
-is barely a check. Naming the answering model counts as blank. The model
-must support tool calling.
+The checker must be a different model. Set VALIDATOR_MODEL to something
+other than OPENAI_MODEL. One model has the same blind spot twice: it
+re-derived its own wrong formula and passed 9 of 11 wrong answers. Blank
+- or the answering model's own name - means no real check. It must
+support tool calling. VALIDATOR_URL / _API_KEY fall back to the OPENAI_
+ones, so a checker on the same gateway needs only its name. Confirm the
+model in use at GET /api/v1/health.
 
-VALIDATOR_URL and VALIDATOR_API_KEY fall back to OPENAI_URL and
-OPENAI_API_KEY. A checker on the same gateway needs only its name.
-
-Costs are never guessed. Every answer reports the tokens it spent. It
-reports a dollar figure only when you configure a rate in .env
-(CHAT_PRICE_*, EMBEDDING_PRICE_INPUT, VALIDATOR_PRICE_*), or when the
-model's list price already ships in usage/pricing.py. Left unset, the UI
-says "no price configured". A gateway can put any model behind any name
-at any margin, so an invented cost is worse than none. Check the
-validator model in use at GET /api/v1/health.
+Costs are never guessed. Tokens are always reported; a dollar figure
+only when a rate is set (CHAT_PRICE_*, EMBEDDING_PRICE_INPUT,
+VALIDATOR_PRICE_*) or ships in usage/pricing.py. Otherwise the UI says
+"no price configured". A gateway can resell any model at any margin, so
+an invented cost is worse than none.
 
 A "filing" is a set of documents, not one file. Retrieval ranks pages
-across every document in the filing. The answer still cites exactly one
-document. In the code these are called collections, because "filing"
-already means a single 10-K inside the pipeline.
+across all of them; the answer cites one. Called "collections" in code.
 
-Page numbers move, evidence does not. The same document paginates
-differently as filed HTML and as the filer's own PDF - 15 of 62
-practice documents disagree by one or two pages. So the system looks for
-the page carrying the evidence and reports what it did: exact,
-adjusted, relocated or inferred. An answer is still only ever attached
-to a page whose own text supports its figures. Re-anchoring moves a
-citation, never an answer.
+Page numbers move, evidence does not. HTML and PDF of the same document
+paginate differently (15 of 62 practice docs disagree by 1-2 pages), so
+the system finds the page holding the evidence and reports how: exact,
+adjusted, relocated or inferred. It never changes the answer.
 
-A refusal is a success, not an error. Declining comes back as a normal
-HTTP 200 with "found": false and "evidence": null.
+A refusal is a success. Declining is HTTP 200 with "found": false.
 
-Chat history needs Postgres. Inside docker compose this is wired up for
-you. Outside it, set DATABASE_URL. With no database the questions are
-still answered, just not recorded, and the /conversations endpoints
-return 503.
+Chat history needs Postgres. Wired up inside docker compose; set
+DATABASE_URL outside it. Without it, answers still work but nothing is
+recorded and /conversations returns 503.
 
-Docker restart reuses the old image. After changing code, run
-"up --build -d", not "restart".
+Docker restart reuses the old image - after a code change use
+"up --build -d".
 
-Indexes rebuild themselves after a parser change. Indices record
-PARSER_VERSION, so stale ones report as absent instead of being quietly
-reused.
+Indexes self-rebuild after a parser change, via PARSER_VERSION.

@@ -2,6 +2,8 @@
 
 Question-answering over company filings, in whatever format the analyst has them.
 
+- **▶ Live demo:** <https://analyst-copilot.technicalheist.com/>
+- **One-page summary:** [docs/summary.txt](docs/summary.txt)
 - **Plan (done vs remaining):** [PLAN.md](PLAN.md)
 - **Implementation docs:** [docs/README.md](docs/README.md)
 - **Challenge spec:** [AGENTS.md](AGENTS.md)
