@@ -5,6 +5,7 @@ import { cn } from '@/lib/cn'
 import { useAuthStore } from '@/stores/auth.store'
 import { useConversationStore } from '@/stores/conversations.store'
 import { dateBucket } from '@/lib/format'
+import { Logo } from '@/components/ui/Logo'
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate()
@@ -34,9 +35,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col bg-surface-sunken">
       <div className="flex items-center gap-2.5 px-4 py-4">
         <Link to="/chat" onClick={onNavigate} className="flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-sm font-bold text-accent-ink">
-            A
-          </span>
+          <Logo className="h-9 w-9" />
           <span className="text-sm font-semibold tracking-tight text-ink">Analyst Copilot</span>
         </Link>
       </div>

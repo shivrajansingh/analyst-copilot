@@ -34,6 +34,7 @@
     --building: 205 88% 42%;
     --building-soft: 205 92% 95%;
     --shadow: 222 40% 20%;
+    --watermark-opacity: 0.25;
   }
 
   .dark {
@@ -58,6 +59,7 @@
     --building: 205 92% 62%;
     --building-soft: 205 60% 14%;
     --shadow: 222 60% 2%;
+    --watermark-opacity: 0.07;
   }
 
   /*
@@ -149,10 +151,27 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    position: relative;
+    min-height: 100%;
+    background-color: var(--surface-sunken);
+  }
+  html::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: url('/gemini-svg.svg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    opacity: var(--watermark-opacity);
+    pointer-events: none;
+    z-index: -1;
   }
 
   body {
-    @apply bg-canvas text-ink font-sans antialiased;
+    background-color: transparent;
+    @apply text-ink font-sans antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
 
