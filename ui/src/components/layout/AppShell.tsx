@@ -14,7 +14,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // the same attribute is how one of them silently stops mattering.
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-canvas">
+    <div className="flex h-dvh overflow-hidden ">
       {/* Persistent rail from lg up; a drawer below it. */}
       <aside className="hidden w-64 shrink-0 border-r border-line lg:block">
         <Sidebar />

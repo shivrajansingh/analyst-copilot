@@ -458,7 +458,7 @@ export function ChatPage() {
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-line bg-canvas px-4 py-4">
+        <div className="shrink-0 border-t border-line bg-surface-sunken px-4 py-4">
           <div className="mx-auto max-w-3xl">
             {threadError && (
               <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-failed/30 bg-failed-soft/40 p-3">
