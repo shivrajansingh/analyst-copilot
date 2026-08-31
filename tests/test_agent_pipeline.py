@@ -734,6 +734,55 @@ def test_a_recalled_answer_carries_the_original_page(markdown):
     assert answer.citations == [answer.citation]
 
 
+def test_a_restatement_that_changes_a_figure_is_refused(markdown):
+    """
+    The citation about to be attached was proved for the *original* figure. A
+    restatement that quietly alters it would put an unproved number on screen
+    under a real page -- the one failure this product exists to prevent, and the
+    prompt forbidding it is an instruction, not a check.
+    """
+    qa = FakeQA()
+    agent = build_agent(
+        qa,
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1,775 million.",  # transposed from 1,577
+                source=HistoryTurn("assistant", "…$1,577 million.", True, 59, DOC),
+            )
+        ),
+    )
+    answer = agent.answer("say that again", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert not answer.recalled, "a changed figure must not be served as a restatement"
+    assert qa.questions, "it must fall through to the ordinary search"
+
+
+def test_an_honest_rescaling_is_still_a_restatement(markdown):
+    """
+    1,577 million read back as 1.577 billion is the same figure in other units.
+    Comparison is by significant digits precisely so this passes.
+    """
+    agent = build_agent(
+        FakeQA(),
+        ready_documents=[DOC],
+        planner=StubPlanner(kind=PlanKind.HISTORY),
+        recaller=StubRecaller(
+            Recollection(
+                found=True,
+                answer="$1.577 billion.",
+                source=HistoryTurn("assistant", "…$1,577 million.", True, 59, DOC),
+            )
+        ),
+    )
+    answer = agent.answer("in billions?", doc_name=DOC, history=CAPEX_THREAD)
+
+    assert answer.recalled
+    assert answer.citation.page == 59
+
+
 def test_a_failed_recall_falls_through_to_the_search(markdown):
     qa = FakeQA()
     recaller = StubRecaller()  # declines

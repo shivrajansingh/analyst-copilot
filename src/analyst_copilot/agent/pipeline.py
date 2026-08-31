@@ -71,6 +71,7 @@ from analyst_copilot.llm import ChatClient, get_chat_client
 from analyst_copilot.parsing.models import SegmentKind
 from analyst_copilot.services.qa.models import NOT_FOUND_MESSAGE, QAAnswer
 from analyst_copilot.services.qa.service import QuestionAnsweringService
+from analyst_copilot.services.qa.verifier import numbers_supported_by_page
 
 logger = logging.getLogger(__name__)
 
@@ -484,6 +485,29 @@ class AnalystAgent:
             return None
 
         source = recollection.source
+        if not numbers_supported_by_page(recollection.answer, source.content):
+            # The restatement carries a figure the earlier answer does not. The
+            # prompt forbids rounding, converting and recomputing, but a prompt
+            # is an instruction and this is the check: the citation about to be
+            # attached was proved for the *original* figure, so a changed one
+            # would go on screen under a page that never carried it. Comparison
+            # is by significant digits, so an honest rescaling -- 1,577 million
+            # read back as 1.577 billion -- still passes.
+            #
+            # Falling through costs one wasted call and then an ordinary search,
+            # which is what every other recall failure costs.
+            logger.warning(
+                "recalled answer does not restate the earlier figures; searching instead"
+            )
+            tracing.emit(
+                on_trace,
+                tracing.thought(
+                    "recall",
+                    "the restatement changed a figure; reading the filing instead",
+                ),
+            )
+            return None
+
         tracing.emit(
             on_trace,
             tracing.thought("recall", recollection.reason or "restated an earlier answer"),
