@@ -64,6 +64,20 @@ Local:
     python scripts/serve_api.py             # :8000, docs at /docs
     cd ui && npm install && npm run dev     # :5173
 
+Using the UI (first run):
+
+  1. Sign in, then open FILINGS in the sidebar.
+  2. Type a name under "New filing" and hit Create. A filing is a folder
+     for related documents - "Boeing 2020-2023", not a single file.
+  3. Open that filing and add documents: drag them onto the dropzone,
+     pick them from disk, or fetch one by URL. HTML, PDF, Word, Excel,
+     CSV, Markdown and text all work.
+  4. Indexing starts on its own. Each document shows its progress:
+     queued, parsing, embedding, saving, ready.
+  5. Once one document is ready, go to CHAT, pick that filing from the
+     picker, and ask. Answers cite the document and page they came
+     from. A conversation stays pinned to the filing it started in.
+
 One question, one filing:
 
     python scripts/examples/ask.py filings/3M_2018_10K.htm "FY2018 capex?"
@@ -83,39 +97,13 @@ Results are written after every question, so runs are safe to interrupt.
 3. SPECIFIC POINTS
 ------------------
 
-Filings are not in the repo. filings/ is 338 MB from the challenge zip
-and is gitignored; unzip it or the tests and eval scripts will not run.
-data/practice-questions.jsonl IS committed.
-
 The checker must be a different model. Set VALIDATOR_MODEL to something
 other than OPENAI_MODEL. One model has the same blind spot twice: it
-re-derived its own wrong formula and passed 9 of 11 wrong answers. Blank
-- or the answering model's own name - means no real check. It must
-support tool calling. VALIDATOR_URL / _API_KEY fall back to the OPENAI_
-ones, so a checker on the same gateway needs only its name. Confirm the
-model in use at GET /api/v1/health.
-
-Costs are never guessed. Tokens are always reported; a dollar figure
-only when a rate is set (CHAT_PRICE_*, EMBEDDING_PRICE_INPUT,
-VALIDATOR_PRICE_*) or ships in usage/pricing.py. Otherwise the UI says
-"no price configured". A gateway can resell any model at any margin, so
-an invented cost is worse than none.
-
-A "filing" is a set of documents, not one file. Retrieval ranks pages
-across all of them; the answer cites one. Called "collections" in code.
+re-derived its own wrong formula.
 
 Page numbers move, evidence does not. HTML and PDF of the same document
 paginate differently (15 of 62 practice docs disagree by 1-2 pages), so
 the system finds the page holding the evidence and reports how: exact,
 adjusted, relocated or inferred. It never changes the answer.
 
-A refusal is a success. Declining is HTTP 200 with "found": false.
 
-Chat history needs Postgres. Wired up inside docker compose; set
-DATABASE_URL outside it. Without it, answers still work but nothing is
-recorded and /conversations returns 503.
-
-Docker restart reuses the old image - after a code change use
-"up --build -d".
-
-Indexes self-rebuild after a parser change, via PARSER_VERSION.
