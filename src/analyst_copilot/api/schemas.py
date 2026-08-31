@@ -26,6 +26,18 @@ class HealthResponse(BaseModel):
     chat_model: str
     embedding_model: str
     indexed_filings: int
+    validator_model: str = Field(
+        default="",
+        description=(
+            "The model that checks an answer. Equal to chat_model when no "
+            "separate one is configured -- which is worth seeing, because a "
+            "checker sharing the writer's model shares its blind spots."
+        ),
+    )
+    independent_validator: bool = Field(
+        default=False,
+        description="Whether checking runs on a different model from answering.",
+    )
 
 
 class IndexState(str, Enum):

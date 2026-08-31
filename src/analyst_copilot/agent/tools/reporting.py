@@ -222,6 +222,47 @@ Report your verdict on the proposed answer, and finish. Call this exactly once.
         return ToolResult(content="Verdict recorded.")
 
 
+class ReportReadingTool(Tool):
+    name = "report_reading"
+    description = """
+Report what this page says in answer to the question, and finish. Call this
+exactly once.
+"""
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return schema(
+            {
+                "answered": {
+                    "type": "boolean",
+                    "description": (
+                        "True only if these pages answer the question. False if "
+                        "they are about something else, or cover the wrong period."
+                    ),
+                },
+                "answer": {
+                    "type": "string",
+                    "description": (
+                        "Your own answer, read off these pages. Lead with the figure "
+                        "where the question asks for one. Empty when answered is false."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "One or two sentences: which line items you used, and for "
+                        "which period."
+                    ),
+                },
+            },
+            required=["answered", "reason"],
+        )
+
+    def run(self, **_kwargs: Any) -> ToolResult:  # pragma: no cover - terminal
+        return ToolResult(content="Reading recorded.")
+
+
 REPORT_FINDING = "report_finding"
 SUBMIT_ANSWER = "submit_answer"
 REPORT_VALIDATION = "report_validation"
+REPORT_READING = "report_reading"

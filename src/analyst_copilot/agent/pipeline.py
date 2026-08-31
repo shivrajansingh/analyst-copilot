@@ -67,7 +67,7 @@ from analyst_copilot.agent.validator import AnswerValidator, Validation, Verdict
 from analyst_copilot.agent import trace as tracing
 from analyst_copilot.agent.verification import verify_agent_answer
 from analyst_copilot.config.settings import Settings, get_settings
-from analyst_copilot.llm import ChatClient, get_chat_client
+from analyst_copilot.llm import ChatClient, get_chat_client, get_validator_client
 from analyst_copilot.parsing.models import SegmentKind
 from analyst_copilot.services.qa.models import NOT_FOUND_MESSAGE, QAAnswer
 from analyst_copilot.services.qa.service import QuestionAnsweringService
@@ -188,8 +188,17 @@ class AnalystAgent:
         return self._decomposer
 
     def _checker(self) -> AnswerValidator:
+        """
+        The checker, on its own model where one is configured.
+
+        Not `self._chat()`. A checker running the answering model agrees with
+        the answering model: on the practice key it re-derived the writer's own
+        wrong formula, confirmed the arithmetic, and passed 9 of 11 wrong
+        answers. `get_validator_client` falls back to the answering model when
+        nothing else is configured, so this is a no-op until it is.
+        """
         if self._validator is None:
-            self._validator = AnswerValidator(self._chat())
+            self._validator = AnswerValidator(get_validator_client())
         return self._validator
 
     def _deep(self) -> DeepSearchOrchestrator:
