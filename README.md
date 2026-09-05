@@ -222,14 +222,34 @@ from its own cache.
 `GET /api/v1/health` reports the validator model in use, so you can confirm the
 setting took.
 
-## Ask one question (index if needed)
+## Ask one question
+
+Ask through the API. That is the only entry point that runs the whole system —
+the planner, the three tiers, and the verifier. Start the server first:
 
 ```bash
-python scripts/examples/ask.py filings/3M_2018_10K.htm "What is the FY2018 capital expenditure amount for 3M?"
+python scripts/serve_api.py          # http://127.0.0.1:8000
 ```
 
-If the filing is not indexed yet, the script embeds it first, then searches and
-prints the answer, page, and evidence. You can also pass a stem: `3M_2018_10K`.
+Upload the filing if it is not indexed yet. The upload returns `202` and a job;
+poll the status until it reads `ready`.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/filings -F "file=@filings/3M_2018_10K.htm"
+curl http://127.0.0.1:8000/api/v1/filings/3M_2018_10K/status
+```
+
+Then ask:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/chat -H 'Content-Type: application/json' \
+  -d '{"doc_name": "3M_2018_10K", "question": "What is the FY2018 capital expenditure amount for 3M?"}'
+```
+
+The reply carries the answer, the document and page it came from, and what the
+run cost. Send `collection` instead of `doc_name` to ask a whole filing. Tier 3
+can take minutes, so use `/api/v1/chat/stream` for the same answer with progress
+events in front of it.
 
 There is no bulk-indexing step. Every entry point indexes what it needs on
 demand — `QuestionAnsweringService` builds a document's indices the first time
@@ -244,6 +264,10 @@ python scripts/examples/run_all_questions.py --limit 5
 ```
 
 Reads `data/questions-by-doc.json`. For each document it embeds if needed, answers that filing’s questions, and updates `data/questions-by-doc-results.json` after every question. Re-running skips questions that already have answers.
+
+This is a tier-1 batch run, not the full harness — it calls the QA service
+directly, the same as `ask.py` did. For a scored run of the whole system, use
+`scripts/eval/run_practice.py` below.
 
 ## Run the API
 
@@ -314,6 +338,12 @@ error. Details: [docs/11-api.md](docs/11-api.md).
 
 ## Examples
 
+Most of these exercise **one layer** and call it directly, for inspecting that
+layer rather than for asking a question. `qa_example.py`, `ask.py` and
+`run_all_questions.py` stop at tier 1: they never run the planner, the checker
+or the reader agents. To ask a real question, use the API above.
+`run_practice.py` is the exception — it runs the full harness.
+
 ```bash
 PYTHONPATH=src python scripts/examples/parse_filing_example.py
 PYTHONPATH=src python scripts/examples/embedding_example.py
@@ -326,7 +356,7 @@ PYTHONPATH=src python scripts/examples/build_questions_by_doc.py
 PYTHONPATH=src python scripts/eval/run_practice.py --limit 5
 ```
 
-`qa_example.py` loads (or builds) indices for `3M_2018_10K`, runs hybrid search, calls the chat model, and prints the verified answer plus page — or **not found in this filing**.
+`qa_example.py` loads (or builds) indices for `3M_2018_10K`, runs hybrid search, calls the chat model once, and prints the verified answer plus page — or **not found in this filing**. That single pass is tier 1.
 
 ## Evaluate and score
 
