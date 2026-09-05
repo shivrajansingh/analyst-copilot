@@ -69,14 +69,14 @@ Full detail: **[what changed and what it measured](docs/17-enhancements.md)**.
 
 ### Supported formats
 
-| Format | Extensions | Unit cited | Boundary from |
-|---|---|---|---|
-| PDF | `.pdf` | page | the file — pages are stored, not inferred |
-| HTML | `.htm` `.html` `.xhtml` | page | `page-break: always` markers |
-| Word | `.docx` | page or section | author page breaks; else headings |
-| Excel | `.xlsx` `.xlsm` | sheet | one worksheet each; row blocks if large |
-| CSV | `.csv` `.tsv` | table | the file; row blocks if large |
-| Markdown / text | `.md` `.txt` | section | whole file, chunked only if oversized |
+| Format          | Extensions              | Unit cited      | Boundary from                             |
+| --------------- | ----------------------- | --------------- | ----------------------------------------- |
+| PDF             | `.pdf`                  | page            | the file — pages are stored, not inferred |
+| HTML            | `.htm` `.html` `.xhtml` | page            | `page-break: always` markers              |
+| Word            | `.docx`                 | page or section | author page breaks; else headings         |
+| Excel           | `.xlsx` `.xlsm`         | sheet           | one worksheet each; row blocks if large   |
+| CSV             | `.csv` `.tsv`           | table           | the file; row blocks if large             |
+| Markdown / text | `.md` `.txt`            | section         | whole file, chunked only if oversized     |
 
 Every format is normalized to Markdown — tables stay tables, so a figure keeps
 its year column — and stored one file per page under `storage/markdown/`.
@@ -203,11 +203,11 @@ Tier 2 checks an answer that tier 1 wrote. That check is only worth running on a
 practice key it re-derived its own wrong formula, confirmed the arithmetic, and
 passed 9 of 11 wrong answers.
 
-| Variable | Effect when set | Effect when blank |
-|---|---|---|
-| `VALIDATOR_MODEL` | Checking runs on this model | Checking runs on `OPENAI_MODEL` — no second opinion |
-| `VALIDATOR_URL` | Provider endpoint for the checker | Falls back to `OPENAI_URL` |
-| `VALIDATOR_API_KEY` | Key for that endpoint | Falls back to `OPENAI_API_KEY` |
+| Variable            | Effect when set                   | Effect when blank                                   |
+| ------------------- | --------------------------------- | --------------------------------------------------- |
+| `VALIDATOR_MODEL`   | Checking runs on this model       | Checking runs on `OPENAI_MODEL` — no second opinion |
+| `VALIDATOR_URL`     | Provider endpoint for the checker | Falls back to `OPENAI_URL`                          |
+| `VALIDATOR_API_KEY` | Key for that endpoint             | Falls back to `OPENAI_API_KEY`                      |
 
 So a checker on the same gateway needs only `VALIDATOR_MODEL`. The model **must
 support tool calling** — the checker finishes by calling `report_validation`.
@@ -275,22 +275,22 @@ directly, the same as `ask.py` did. For a scored run of the whole system, use
 python scripts/serve_api.py          # http://127.0.0.1:8000, interactive docs at /docs
 ```
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/api/v1/collections` | Create a filing |
-| `POST` | `/api/v1/collections/{name}/documents` | Add **many** documents to a filing at once |
-| `GET` | `/api/v1/collections/{name}/jobs` | Indexing progress, one row per document |
-| `POST` | `/api/v1/filings` | Add a single filing (multipart upload) — returns `202` + a job to poll |
-| `GET` | `/api/v1/filings/{doc_name}/status` | `queued → parsing → embedding → saving → ready` / `failed` |
-| `GET` | `/api/v1/filings` | Filings the service can answer from |
-| `POST` | `/api/v1/chat` | Ask one question of one **filing** (or one document) |
-| `POST` | `/api/v1/chat/stream` | The same answer, preceded by progress events (SSE) |
-| `GET` | `/api/v1/conversations` | The caller's chat threads, newest first |
-| `POST` | `/api/v1/conversations` | Start a thread (pinned to one filing) |
-| `GET` | `/api/v1/conversations/{id}` | A thread with all its messages |
-| `PATCH` | `/api/v1/conversations/{id}` | Rename a thread |
-| `DELETE` | `/api/v1/conversations/{id}` | Delete a thread and its messages |
-| `GET` | `/api/v1/health` | Models in use, filings indexed |
+| Method   | Path                                   | Purpose                                                                |
+| -------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| `POST`   | `/api/v1/collections`                  | Create a filing                                                        |
+| `POST`   | `/api/v1/collections/{name}/documents` | Add **many** documents to a filing at once                             |
+| `GET`    | `/api/v1/collections/{name}/jobs`      | Indexing progress, one row per document                                |
+| `POST`   | `/api/v1/filings`                      | Add a single filing (multipart upload) — returns `202` + a job to poll |
+| `GET`    | `/api/v1/filings/{doc_name}/status`    | `queued → parsing → embedding → saving → ready` / `failed`             |
+| `GET`    | `/api/v1/filings`                      | Filings the service can answer from                                    |
+| `POST`   | `/api/v1/chat`                         | Ask one question of one **filing** (or one document)                   |
+| `POST`   | `/api/v1/chat/stream`                  | The same answer, preceded by progress events (SSE)                     |
+| `GET`    | `/api/v1/conversations`                | The caller's chat threads, newest first                                |
+| `POST`   | `/api/v1/conversations`                | Start a thread (pinned to one filing)                                  |
+| `GET`    | `/api/v1/conversations/{id}`           | A thread with all its messages                                         |
+| `PATCH`  | `/api/v1/conversations/{id}`           | Rename a thread                                                        |
+| `DELETE` | `/api/v1/conversations/{id}`           | Delete a thread and its messages                                       |
+| `GET`    | `/api/v1/health`                       | Models in use, filings indexed                                         |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/chat -H 'Content-Type: application/json' \
@@ -429,12 +429,12 @@ Agents propose. It decides.
 
 The page number is the least reliable link in the chain: the same document paginates differently as filed HTML and as the filer's own PDF, and 15 of 62 documents in the practice corpus disagree by one or two pages between the two. So verification finds the page and reports what it did:
 
-| `location_match` | Meaning |
-|---|---|
-| `exact` | The model's page carries the evidence |
-| `adjusted` | A page within `evidence_page_tolerance` (2) does; the citation moved there |
-| `relocated` | A distant page carries the quote verbatim; the citation moved there |
-| `inferred` | The model named no page; the best-supported one was used |
+| `location_match` | Meaning                                                                    |
+| ---------------- | -------------------------------------------------------------------------- |
+| `exact`          | The model's page carries the evidence                                      |
+| `adjusted`       | A page within `evidence_page_tolerance` (2) does; the citation moved there |
+| `relocated`      | A distant page carries the quote verbatim; the citation moved there        |
+| `inferred`       | The model named no page; the best-supported one was used                   |
 
 This does not loosen the guard against a wrong answer. An answer is still only ever attached to a page whose own text supports its figures — the change is that the system looks for that page instead of requiring the model to guess its number. Re-anchoring moves a citation; it never changes an answer.
 
